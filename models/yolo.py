@@ -27,7 +27,7 @@ from utils.autoanchor import check_anchor_order
 from utils.general import LOGGER, check_version, check_yaml, make_divisible, print_args
 from utils.plots import feature_visualization
 from utils.torch_utils import (fuse_conv_and_bn, initialize_weights, model_info, profile, scale_img, select_device,
-                               time_sync)
+                               time_sync, reshape_classifier_output)
 
 try:
     import thop  # for FLOPs computation
@@ -261,8 +261,6 @@ class DetectionModel(BaseModel):
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
 
-Model = DetectionModel  # retain YOLOv5 'Model' class for backwards compatibility
-
 
 class SegmentationModel(DetectionModel):
     # YOLOv5 segmentation model
@@ -272,9 +270,20 @@ class SegmentationModel(DetectionModel):
 
 class ClassificationModel(BaseModel):
     # YOLOv5 classification model
-    def __init__(self, cfg=None, model=None, nc=1000, cutoff=10):  # yaml, model, number of classes, cutoff index
+    def __init__(self, cfg=None, model=None, nc=1000, cutoff=10, ch=3 ):  # yaml, model, number of classes, cutoff index
         super().__init__()
-        self._from_detection_model(model, nc, cutoff) if model is not None else self._from_yaml(cfg)
+        self.ch = ch
+        if isinstance(cfg, dict):
+            self.yaml = cfg  # model dict
+        else:  # is *.yaml
+            import yaml  # for torch hub
+            self.yaml_file = Path(cfg).name
+            with open(cfg, encoding='ascii', errors='ignore') as f:
+                self.yaml = yaml.safe_load(f)  # model dict
+        
+        self._from_detection_model(model, nc, cutoff) if model is not None else self._from_yaml(nc)
+        self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
+        self.inplace = self.yaml.get('inplace', True)
 
     def _from_detection_model(self, model, nc=1000, cutoff=10):
         # Create a YOLOv5 classification model from a YOLOv5 detection model
@@ -291,10 +300,101 @@ class ClassificationModel(BaseModel):
         self.save = []
         self.nc = nc
 
-    def _from_yaml(self, cfg):
-        # Create a YOLOv5 classification model from a *.yaml file
-        self.model = None
 
+    def _from_yaml(self, nc=1000):
+        # Create a YOLOv5 classification model from a *.yaml file
+        self.model, self.save = parse_classification_model(deepcopy(self.yaml), ch=[self.ch])
+        # reshape_classifier_output(self.model, nc)  # update class count
+        '''m = self.model[-1]  # last layer
+        ch = m.conv.in_channels if hasattr(m, 'conv') else m.cv1.conv.in_channels  # ch into module
+        c = Classify(ch, nc)  # Classify()
+        c.i, c.f, c.type = m.i, m.f, 'models.common.Classify'  # index, from, type
+        self.model.append( c )
+        print( " ", len(self.model)-1 , self.model[-1] )'''
+        print( self.model )
+
+
+    def forward(self, x, augment=False, profile=False, visualize=False):
+        if augment:
+            return self._forward_augment(x)  # augmented inference, None
+        return self._forward_once(x, profile, visualize)  # single-scale inference, train
+
+    def _forward_augment(self, x):
+        img_size = x.shape[-2:]  # height, width
+        s = [1, 0.83, 0.67]  # scales
+        f = [None, 3, None]  # flips (2-ud, 3-lr)
+        y = []  # outputs
+        for si, fi in zip(s, f):
+            xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
+            yi = self._forward_once(xi)[0]  # forward
+            # cv2.imwrite(f'img_{si}.jpg', 255 * xi[0].cpu().numpy().transpose((1, 2, 0))[:, :, ::-1])  # save
+            yi = self._descale_pred(yi, fi, si, img_size)
+            y.append(yi)
+        y = self._clip_augmented(y)  # clip augmented tails
+        return torch.cat(y, 1), None  # augmented inference, train
+
+
+def parse_classification_model(d, ch):  # model_dict, input_channels(3)
+    # Parse a YOLOv5 model.yaml dictionary
+    LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    anchors, nc, gd, gw, act = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d.get('activation')
+    if act:
+        Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
+        LOGGER.info(f"{colorstr('activation:')} {act}")  # print
+    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
+    # no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
+    no = nc   # number of outputs = anchors * (classes + 5)
+
+
+    layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
+    for i, (f, n, m, args) in enumerate(d['backbone']):  # from, number, module, args
+        m = eval(m) if isinstance(m, str) else m  # eval strings
+        for j, a in enumerate(args):
+            with contextlib.suppress(NameError):
+                args[j] = eval(a) if isinstance(a, str) else a  # eval strings
+
+        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
+        if m in {
+                Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
+                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x, Classify}:
+            c1, c2 = ch[f], args[0]
+            if c2 != no:  # if not output
+                c2 = make_divisible(c2 * gw, 8)
+
+            args = [c1, c2, *args[1:]]
+            if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
+                args.insert(2, n)  # number of repeats
+                n = 1
+        elif m is nn.BatchNorm2d:
+            args = [ch[f]]
+
+        '''elif m is Concat:
+            c2 = sum(ch[x] for x in f)
+        # TODO: channel, gw, gd
+        elif m in {Detect, Segment}:
+            args.append([ch[x] for x in f])
+            if isinstance(args[1], int):  # number of anchors
+                args[1] = [list(range(args[1] * 2))] * len(f)
+            if m is Segment:
+                args[3] = make_divisible(args[3] * gw, 8)
+        elif m is Contract:
+            c2 = ch[f] * args[0] ** 2
+        elif m is Expand:
+            c2 = ch[f] // args[0] ** 2
+        else:
+            c2 = ch[f]'''
+
+        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+        t = str(m)[8:-2].replace('__main__.', '')  # module type
+        np = sum(x.numel() for x in m_.parameters())  # number params
+        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
+        LOGGER.info(f'{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}')  # print
+        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        layers.append(m_)
+        if i == 0:
+            ch = []
+        ch.append(c2)
+    return nn.Sequential(*layers), sorted(save)
 
 def parse_model(d, ch):  # model_dict, input_channels(3)
     # Parse a YOLOv5 model.yaml dictionary
@@ -355,6 +455,8 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
+# Model = DetectionModel  # retain YOLOv5 'Model' class for backwards compatibility
+Model = ClassificationModel
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
