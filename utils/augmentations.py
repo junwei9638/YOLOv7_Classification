@@ -343,7 +343,7 @@ def classify_albumentations(
     except Exception as e:
         LOGGER.info(f'{prefix}{e}')
 
-
+# TODO: cannot do the center crop, it should be padding
 def classify_transforms(size=224):
     # Transforms to apply if albumentations not installed
     assert isinstance(size, int), f'ERROR: classify_transforms size {size} must be integer, not (list, tuple)'

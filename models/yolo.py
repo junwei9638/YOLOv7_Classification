@@ -267,6 +267,7 @@ class SegmentationModel(DetectionModel):
     def __init__(self, cfg='yolov5s-seg.yaml', ch=3, nc=None, anchors=None):
         super().__init__(cfg, ch, nc, anchors)
 
+# REVIEW: add forward and _forward_augment
 
 class ClassificationModel(BaseModel):
     # YOLOv5 classification model
@@ -300,18 +301,9 @@ class ClassificationModel(BaseModel):
         self.save = []
         self.nc = nc
 
-
     def _from_yaml(self, nc=1000):
         # Create a YOLOv5 classification model from a *.yaml file
         self.model, self.save = parse_classification_model(deepcopy(self.yaml), ch=[self.ch])
-        # reshape_classifier_output(self.model, nc)  # update class count
-        '''m = self.model[-1]  # last layer
-        ch = m.conv.in_channels if hasattr(m, 'conv') else m.cv1.conv.in_channels  # ch into module
-        c = Classify(ch, nc)  # Classify()
-        c.i, c.f, c.type = m.i, m.f, 'models.common.Classify'  # index, from, type
-        self.model.append( c )
-        print( " ", len(self.model)-1 , self.model[-1] )'''
-        print( self.model )
 
 
     def forward(self, x, augment=False, profile=False, visualize=False):
@@ -333,6 +325,7 @@ class ClassificationModel(BaseModel):
         y = self._clip_augmented(y)  # clip augmented tails
         return torch.cat(y, 1), None  # augmented inference, train
 
+# REVIEW: add parse_cls_model, adjust the number of output
 
 def parse_classification_model(d, ch):  # model_dict, input_channels(3)
     # Parse a YOLOv5 model.yaml dictionary
@@ -344,7 +337,6 @@ def parse_classification_model(d, ch):  # model_dict, input_channels(3)
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
     # no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
     no = nc   # number of outputs = anchors * (classes + 5)
-
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (f, n, m, args) in enumerate(d['backbone']):  # from, number, module, args
@@ -367,22 +359,6 @@ def parse_classification_model(d, ch):  # model_dict, input_channels(3)
                 n = 1
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
-
-        '''elif m is Concat:
-            c2 = sum(ch[x] for x in f)
-        # TODO: channel, gw, gd
-        elif m in {Detect, Segment}:
-            args.append([ch[x] for x in f])
-            if isinstance(args[1], int):  # number of anchors
-                args[1] = [list(range(args[1] * 2))] * len(f)
-            if m is Segment:
-                args[3] = make_divisible(args[3] * gw, 8)
-        elif m is Contract:
-            c2 = ch[f] * args[0] ** 2
-        elif m is Expand:
-            c2 = ch[f] // args[0] ** 2
-        else:
-            c2 = ch[f]'''
 
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
         t = str(m)[8:-2].replace('__main__.', '')  # module type
@@ -429,7 +405,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-        # TODO: channel, gw, gd
+        # TOD: channel, gw, gd
         elif m in {Detect, Segment}:
             args.append([ch[x] for x in f])
             if isinstance(args[1], int):  # number of anchors

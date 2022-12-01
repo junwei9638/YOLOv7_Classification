@@ -40,8 +40,10 @@ from classify import val as validate
 from models.experimental import attempt_load
 from models.yolo import ClassificationModel, DetectionModel
 from utils.dataloaders import create_classification_dataloader
+
+# REVIEW: import check_yaml
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
-                           download, increment_path, init_seeds, print_args, yaml_save)
+                           download, increment_path, init_seeds, print_args, yaml_save, check_yaml)
 from utils.loggers import GenericLogger
 from utils.plots import imshow_cls
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
@@ -104,19 +106,29 @@ def train(opt, device):
                                                       rank=-1,
                                                       workers=nw)
 
+    # REVIEW: add opt.cfg to import model from yaml
     # Model
     with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
-        if Path(opt.model).is_file() or opt.model.endswith('.pt'):
+        if opt.model is not None and ( Path(opt.model).is_file() or opt.model.endswith('.pt') ):
             model = attempt_load(opt.model, device='cpu', fuse=False)
+
         elif opt.model in torchvision.models.__dict__:  # TorchVision models i.e. resnet50, efficientnet_b0
             model = torchvision.models.__dict__[opt.model](weights='IMAGENET1K_V1' if pretrained else None)
+
+        elif opt.cfg is not None : 
+            LOGGER.info( "Loading Model from yaml................" ) 
+            check_yaml(opt.cfg)
+            model = ClassificationModel(model=opt.model, cfg=opt.cfg, nc=nc, cutoff=opt.cutoff or 10)
         else:
             m = hub.list('ultralytics/yolov5')  # + hub.list('pytorch/vision')  # models
             raise ModuleNotFoundError(f'--model {opt.model} not found. Available models are: \n' + '\n'.join(m))
-        if isinstance(model, DetectionModel):
+
+        '''if isinstance(model, DetectionModel):
             LOGGER.warning("WARNING ⚠️ pass YOLOv5 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
-            model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model
+            model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model'''
+
         reshape_classifier_output(model, nc)  # update class count
+
     for m in model.modules():
         if not pretrained and hasattr(m, 'reset_parameters'):
             m.reset_parameters()
@@ -152,6 +164,12 @@ def train(opt, device):
     # EMA
     ema = ModelEMA(model) if RANK in {-1, 0} else None
 
+    # REVIEW: add parallel gpus to training
+    if cuda and RANK == -1 and torch.cuda.device_count() > 1:
+        LOGGER.warning('WARNING ⚠️ DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n'
+                       'See Multi-GPU Tutorial at https://github.com/ultralytics/yolov5/issues/475 to get started.')
+        model = torch.nn.DataParallel(model)
+
     # DDP mode
     if cuda and RANK != -1:
         model = smart_DDP(model)
@@ -165,7 +183,7 @@ def train(opt, device):
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} test\n'
                 f'Using {nw * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
-                f'Starting {opt.model} training on {data} dataset with {nc} classes for {epochs} epochs...\n\n'
+                f'Starting training on {data} dataset with {nc} classes for {epochs} epochs...\n\n'
                 f"{'Epoch':>10}{'GPU_mem':>10}{'train_loss':>12}{f'{val}_loss':>12}{'top1_acc':>12}{'top5_acc':>12}")
     for epoch in range(epochs):  # loop over the dataset multiple times
         tloss, vloss, fitness = 0.0, 0.0, 0.0  # train loss, val loss, fitness
@@ -266,9 +284,11 @@ def train(opt, device):
         logger.log_model(best, epochs, metadata=meta)
 
 
+# REVIEW: add opt-cfg to open yaml
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='yolov5s-cls.pt', help='initial weights path')
+    parser.add_argument('--model', type=str, default=None, help='initial weights path')
+    parser.add_argument('--cfg', type=str, default=None, help='model yaml file')
     parser.add_argument('--data', type=str, default='imagenette160', help='cifar10, cifar100, mnist, imagenet, ...')
     parser.add_argument('--epochs', type=int, default=10, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=64, help='total batch size for all GPUs')
@@ -276,7 +296,7 @@ def parse_opt(known=False):
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')
     parser.add_argument('--cache', type=str, nargs='?', const='ram', help='--cache images in "ram" (default) or "disk"')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
+    parser.add_argument('--workers', type=int, default=2, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--project', default=ROOT / 'runs/train-cls', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
