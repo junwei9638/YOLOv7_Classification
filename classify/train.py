@@ -212,6 +212,7 @@ def train(opt, device):
             if ema:
                 ema.update(model)
 
+            # TODO: add precision and recall 
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
