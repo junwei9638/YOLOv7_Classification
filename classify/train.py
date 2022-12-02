@@ -275,9 +275,13 @@ def train(opt, device):
                     f"\nVisualize:       https://netron.app\n")
 
         # Plot examples
+        # REVIEW: add cls_names to solve the problem that nn.DataParallel has no the attribute of name
         images, labels = (x[:25] for x in next(iter(testloader)))  # first 25 images and labels
         pred = torch.max(ema.ema(images.to(device)), 1)[1]
-        file = imshow_cls(images, labels, pred, model.names, verbose=False, f=save_dir / 'test_images.jpg')
+        
+        cls_names = trainloader.dataset.classes
+        test_cls = testloader.dataset.classes
+        file = imshow_cls(images, labels, pred, test_cls, cls_names, verbose=False, f=save_dir / 'test_images.jpg')
 
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}

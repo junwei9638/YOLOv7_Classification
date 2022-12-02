@@ -444,10 +444,11 @@ def plot_labels(labels, names=(), save_dir=Path('')):
     plt.close()
 
 
-def imshow_cls(im, labels=None, pred=None, names=None, nmax=25, verbose=False, f=Path('images.jpg')):
+# REVIEW: add test_cls to make test gt right
+
+def imshow_cls(im, labels=None, pred=None, test_cls=None, names=None, nmax=25, verbose=False, f=Path('images.jpg')):
     # Show classification image grid with labels (optional) and predictions (optional)
     from utils.augmentations import denormalize
-
     names = names or [f'class{i}' for i in range(1000)]
     blocks = torch.chunk(denormalize(im.clone()).cpu().float(), len(im),
                          dim=0)  # select batch index 0, block by channels
@@ -460,7 +461,10 @@ def imshow_cls(im, labels=None, pred=None, names=None, nmax=25, verbose=False, f
         ax[i].imshow(blocks[i].squeeze().permute((1, 2, 0)).numpy().clip(0.0, 1.0))
         ax[i].axis('off')
         if labels is not None:
-            s = names[labels[i]] + (f'—{names[pred[i]]}' if pred is not None else '')
+            if test_cls is not None:
+                s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred[i]]}' if pred is not None else '')
+            else:
+                s =  "gt:" + names[labels[i]] + (f', pred:{names[pred[i]]}' if pred is not None else '')
             ax[i].set_title(s, fontsize=8, verticalalignment='top')
     plt.savefig(f, dpi=300, bbox_inches='tight')
     plt.close()
