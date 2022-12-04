@@ -343,12 +343,13 @@ def classify_albumentations(
     except Exception as e:
         LOGGER.info(f'{prefix}{e}')
 
-# TODO: cannot do the center crop, it should be padding
+# REVIEW: Only Resize, no center crop 
 def classify_transforms(size=224):
     # Transforms to apply if albumentations not installed
     assert isinstance(size, int), f'ERROR: classify_transforms size {size} must be integer, not (list, tuple)'
     # T.Compose([T.ToTensor(), T.Resize(size), T.CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    return T.Compose([CenterCrop(size), ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+    #return T.Compose([T.ToTensor(), T.Resize(size), T.RandomCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+    return T.Compose([ Resize(size), ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 
 class LetterBox:
@@ -395,3 +396,13 @@ class ToTensor:
         im = im.half() if self.half else im.float()  # uint8 to fp16/32
         im /= 255.0  # 0-255 to 0.0-1.0
         return im
+
+# REVIEW: add Resize class
+class Resize:
+    # YOLOv5 CenterCrop class for image preprocessing, i.e. T.Compose([CenterCrop(size), ToTensor()])
+    def __init__(self, size=640):
+        super().__init__()
+        self.h, self.w = (size, size) if isinstance(size, int) else size
+
+    def __call__(self, im):  # im = np.array HWC
+        return cv2.resize(im[0:self.h, 0:self.w], (self.w, self.h), interpolation=cv2.INTER_LINEAR)
