@@ -97,16 +97,17 @@ def train(opt, device):
                                                    rank=LOCAL_RANK,
                                                    workers=nw)
 
-    test_dir = data_dir / 'test' if (data_dir / 'test').exists() else data_dir / 'val'  # data/test or data/val
+    # REVIEW: test_dir turn into val_dir
+    # test_dir = data_dir / 'test' if (data_dir / 'test').exists() else data_dir / 'val'  # data/test or data/val
+    val_dir = data_dir / 'val' #  data/val
     if RANK in {-1, 0}:
-        testloader = create_classification_dataloader(path=test_dir,
+        valloader = create_classification_dataloader(path=val_dir,
                                                       imgsz=imgsz,
                                                       batch_size=bs // WORLD_SIZE * 2,
                                                       augment=False,
                                                       cache=opt.cache,
                                                       rank=-1,
                                                       workers=nw)
-
     # REVIEW: add opt.cfg to import model from yaml
     # Model
     with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
@@ -142,7 +143,7 @@ def train(opt, device):
     # Info
     if RANK in {-1, 0}:
         model.names = trainloader.dataset.classes  # attach class names
-        model.transforms = testloader.dataset.torch_transforms  # attach inference transforms
+        model.transforms = valloader.dataset.torch_transforms  # attach inference transforms
         model_info(model)
         if opt.verbose:
             LOGGER.info(model)
@@ -180,7 +181,7 @@ def train(opt, device):
     criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
     best_fitness = 0.0
     scaler = amp.GradScaler(enabled=cuda)
-    val = test_dir.stem  # 'val' or 'test'
+    val = val_dir.stem  # 'val' or 'test'
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} test\n'
                 f'Using {nw * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
@@ -213,7 +214,6 @@ def train(opt, device):
             if ema:
                 ema.update(model)
 
-            # TODO: add precision and recall 
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
@@ -223,7 +223,7 @@ def train(opt, device):
                 # Test
                 if i == len(pbar) - 1:  # last batch
                     top1, top5, vloss = validate.run(model=ema.ema,
-                                                     dataloader=testloader,
+                                                     dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
@@ -278,21 +278,23 @@ def train(opt, device):
 
         # Plot examples
         # REVIEW: add cls_names to solve the problem that nn.DataParallel has no the attribute of name
-        images, labels = (x[:25] for x in next(iter(testloader)))  # first 25 images and labels
+        images, labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
         pred = torch.max(ema.ema(images.to(device)), 1)[1]
-        
-        cls_names = trainloader.dataset.classes
-        test_cls = testloader.dataset.classes
-        file = imshow_cls(images, labels, pred, test_cls, cls_names, verbose=False, f=save_dir / 'test_images.jpg')
 
-        # TODO: confusion matrix undone
-        confusion_matrix = ConfusionMatrix(nc=nc)
-        confusion_matrix.plot(save_dir=save_dir, names=list(cls_names))
+        train_cls = trainloader.dataset.classes
+        test_cls = valloader.dataset.classes
+       # print( test_cls )
+        file = imshow_cls(images, labels, pred, test_cls, train_cls, verbose=False, f=save_dir / 'test_images.jpg')
 
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}
         logger.log_images(file, name='Test Examples (true-predicted)', epoch=epoch)
         logger.log_model(best, epochs, metadata=meta)
+
+    # TODO: Confusion matrix and PR undone
+    test_batch_images, test_batch_labels = next(iter(valloader))
+    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
+    print( len(test_batch_pred), len(test_batch_labels) )
 
 
 
