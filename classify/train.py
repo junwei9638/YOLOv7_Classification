@@ -303,9 +303,7 @@ def train(opt, device):
 
     # TODO: Confusion matrix and PR undone
     test_batch_images, test_batch_labels = next(iter(testloader))
-    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
-    
-        
+    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]        
 
 
 
