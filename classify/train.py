@@ -97,11 +97,21 @@ def train(opt, device):
                                                    rank=LOCAL_RANK,
                                                    workers=nw)
 
-    # REVIEW: test_dir turn into val_dir
+    # REVIEW: add testloader and test_dir turn into val_dir 
     # test_dir = data_dir / 'test' if (data_dir / 'test').exists() else data_dir / 'val'  # data/test or data/val
     val_dir = data_dir / 'val' #  data/val
     if RANK in {-1, 0}:
         valloader = create_classification_dataloader(path=val_dir,
+                                                      imgsz=imgsz,
+                                                      batch_size=bs // WORLD_SIZE * 2,
+                                                      augment=False,
+                                                      cache=opt.cache,
+                                                      rank=-1,
+                                                      workers=nw)
+
+    test_dir = data_dir / 'test' #  data/val
+    if RANK in {-1, 0}:
+        testloader = create_classification_dataloader(path=test_dir,
                                                       imgsz=imgsz,
                                                       batch_size=bs // WORLD_SIZE * 2,
                                                       augment=False,
@@ -292,9 +302,10 @@ def train(opt, device):
         logger.log_model(best, epochs, metadata=meta)
 
     # TODO: Confusion matrix and PR undone
-    test_batch_images, test_batch_labels = next(iter(valloader))
+    test_batch_images, test_batch_labels = next(iter(testloader))
     test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
-    print( len(test_batch_pred), len(test_batch_labels) )
+    
+        
 
 
 
