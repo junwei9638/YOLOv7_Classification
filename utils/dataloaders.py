@@ -1158,6 +1158,7 @@ class HUBDatasetStats():
         return self.im_dir
 
 
+# TODO: dataset load from txt
 # Classification dataloaders -------------------------------------------------------------------------------------------
 class ClassificationDataset(torchvision.datasets.ImageFolder):
     """

@@ -28,6 +28,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 
+
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
@@ -58,6 +59,7 @@ def run(
     dataloader=None,
     criterion=None,
     pbar=None,
+    nc=None,
 ):
     # Initialize/load model and set device
     training = model is not None

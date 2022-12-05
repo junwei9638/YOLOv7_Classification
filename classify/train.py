@@ -48,6 +48,7 @@ from utils.loggers import GenericLogger
 from utils.plots import imshow_cls
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
                                smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
+from utils.metrics import ConfusionMatrix
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -224,7 +225,8 @@ def train(opt, device):
                     top1, top5, vloss = validate.run(model=ema.ema,
                                                      dataloader=testloader,
                                                      criterion=criterion,
-                                                     pbar=pbar)  # test accuracy, loss
+                                                     pbar=pbar,
+                                                     nc=nc)  # test accuracy, loss
                     fitness = top1  # define fitness as top1 accuracy
 
         # Scheduler
@@ -283,10 +285,15 @@ def train(opt, device):
         test_cls = testloader.dataset.classes
         file = imshow_cls(images, labels, pred, test_cls, cls_names, verbose=False, f=save_dir / 'test_images.jpg')
 
+        # TODO: confusion matrix undone
+        confusion_matrix = ConfusionMatrix(nc=nc)
+        confusion_matrix.plot(save_dir=save_dir, names=list(cls_names))
+
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}
         logger.log_images(file, name='Test Examples (true-predicted)', epoch=epoch)
         logger.log_model(best, epochs, metadata=meta)
+
 
 
 # REVIEW: add opt-cfg to open yaml
