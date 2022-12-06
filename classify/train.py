@@ -40,6 +40,11 @@ from classify import val as validate
 from models.experimental import attempt_load
 from models.yolo import ClassificationModel, DetectionModel
 from utils.dataloaders import create_classification_dataloader
+from sklearn import metrics as ms
+from sklearn.metrics import plot_confusion_matrix
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 # REVIEW: import check_yaml
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
@@ -48,8 +53,6 @@ from utils.loggers import GenericLogger
 from utils.plots import imshow_cls
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
                                smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
-from utils.metrics import ConfusionMatrix
-
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
@@ -301,9 +304,32 @@ def train(opt, device):
         logger.log_images(file, name='Test Examples (true-predicted)', epoch=epoch)
         logger.log_model(best, epochs, metadata=meta)
 
-    # TODO: Confusion matrix and PR undone
+    # REVIEW: Test confusion matrix and PR done
     test_batch_images, test_batch_labels = next(iter(testloader))
-    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]        
+    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
+    
+    confusion_matrix = ms.confusion_matrix( y_true=test_batch_labels.cpu().numpy(), y_pred=test_batch_pred.cpu().numpy(), labels=np.unique(testloader.dataset.classes) ) 
+    cls_report = ms.classification_report(test_batch_labels.cpu().numpy(), test_batch_pred.cpu().numpy(), zero_division=0)
+    
+    with open( os.path.join(save_dir, "cls_report.txt"), 'a') as f:
+        f.write( cls_report )
+
+    test_classes = sorted( [eval(i) for i in np.unique( testloader.dataset.classes ).tolist()] ) 
+    with open( os.path.join(save_dir, "confision_matrix.txt"), 'a') as f:
+        f.write("\t" + "|" + "\t" )
+        for i in test_classes :
+            f.write( str(i) + "\t")
+        f.write( "\n" )
+
+        for i in range( len( test_classes ) ) :
+            f.write( "-----" )
+        f.write( "\n" )
+
+        for i, row in enumerate(confusion_matrix):
+            f.write( str(test_classes[i]) + "\t" + "|" + "\t")
+            for j in row:
+                f.write(np.array2string( j ) + "\t")
+            f.write( "\n" )
 
 
 

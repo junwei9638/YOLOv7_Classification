@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+
 from utils import TryExcept, threaded
 
 
@@ -362,6 +363,5 @@ def plot_mc_curve(px, py, save_dir=Path('mc_curve.png'), names=(), xlabel='Confi
     fig.savefig(save_dir, dpi=250)
     plt.close(fig)
 
-# TODO: finish the pr
-# def classification_pr( pred=None, target=None ) :
-    
+
+
