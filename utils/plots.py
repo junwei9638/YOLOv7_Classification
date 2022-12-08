@@ -24,6 +24,7 @@ from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, check_requireme
                            is_ascii, xywh2xyxy, xyxy2xywh)
 from utils.metrics import fitness
 from utils.segment.general import scale_image
+from sklearn import metrics as ms
 
 # Settings
 RANK = int(os.getenv('RANK', -1))
@@ -577,3 +578,27 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
         # cv2.imwrite(f, crop)  # save BGR, https://github.com/ultralytics/yolov5/issues/7007 chroma subsampling issue
         Image.fromarray(crop[..., ::-1]).save(f, quality=95, subsampling=0)  # save RGB
     return crop
+
+def WriteReport(target, pred, save_dir, classes):
+    confusion_matrix = ms.confusion_matrix( y_true=target.cpu().numpy(), y_pred=pred.cpu().numpy(), labels=list(map(int, np.unique(classes))) ) 
+    cls_report = ms.classification_report(target.cpu().numpy(), pred.cpu().numpy(), zero_division=0)
+    
+    with open( os.path.join(save_dir, "cls_report.txt"), 'a') as f:
+        f.write( cls_report )
+
+    test_classes = sorted( [eval(i) for i in np.unique( classes ).tolist()] ) 
+    with open( os.path.join(save_dir, "confision_matrix.txt"), 'a') as f:
+        f.write("\t" + "|" + "\t" )
+        for i in test_classes :
+            f.write( str(i) + "\t")
+        f.write( "\n" )
+
+        for i in range( len( test_classes ) ) :
+            f.write( "-----" )
+        f.write( "\n" )
+
+        for i, row in enumerate(confusion_matrix):
+            f.write( str(test_classes[i]) + "\t" + "|" + "\t")
+            for j in row:
+                f.write(np.array2string( j ) + "\t")
+            f.write( "\n" )
