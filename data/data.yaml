@@ -1,8 +1,5 @@
-train: /home/lab602.our_container/.pipeline/11077006/pedestrian_4_corners_bd_resize/train.txt
-val: /home/lab602.our_container/.pipeline/11077006/pedestrian_4_corners_bd_resize/val.txt
+train: /home/lab602.our_container/.pipeline/11077006/traffic_sign/train.txt
+val: /home/lab602.our_container/.pipeline/11077006/traffic_sign/val.txt
 
-# number of classes
-nc: 1
-
-# class names
-names: [ 'pedestrian' ]
+# Classes
+names: ['prohibitory', 'danger', 'mandatory', 'other']

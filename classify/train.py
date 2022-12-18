@@ -21,6 +21,7 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+import yaml
 
 import torch
 import torch.distributed as dist
@@ -39,7 +40,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 from classify import val as validate
 from models.experimental import attempt_load
 from models.yolo import ClassificationModel, DetectionModel
-from utils.dataloaders import create_classification_dataloader
+from utils.dataloaders import create_classification_dataloader, create_dataloader
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,7 +48,7 @@ import pandas as pd
 
 # REVIEW: import check_yaml
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
-                           download, increment_path, init_seeds, print_args, yaml_save, check_yaml)
+                           download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset)
 from utils.loggers import GenericLogger
 from utils.plots import imshow_cls, WriteReport
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
@@ -59,11 +60,16 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def train(opt, device):
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
+    # REVIEW: change data = Path(opt.data) to data = opt.data
     save_dir, data, bs, epochs, nw, imgsz, pretrained = \
-        opt.save_dir, Path(opt.data), opt.batch_size, opt.epochs, min(os.cpu_count() - 1, opt.workers), \
+        opt.save_dir, opt.data, opt.batch_size, opt.epochs, min(os.cpu_count() - 1, opt.workers), \
         opt.imgsz, str(opt.pretrained).lower() == 'true'
     cuda = device.type != 'cpu'
 
+    # REVIEW: add check_dataset
+    with torch_distributed_zero_first(LOCAL_RANK):
+        data_dict = check_dataset(data)  # check if None
+    
     # Directories
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
@@ -76,7 +82,7 @@ def train(opt, device):
     logger = GenericLogger(opt=opt, console_logger=LOGGER) if RANK in {-1, 0} else None
 
     # Download Dataset
-    with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
+    '''with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
         data_dir = data if data.is_dir() else (DATASETS_DIR / data)
         if not data_dir.is_dir():
             LOGGER.info(f'\nDataset not found ⚠️, missing path {data_dir}, attempting download...')
@@ -87,21 +93,40 @@ def train(opt, device):
                 url = f'https://github.com/ultralytics/yolov5/releases/download/v1.0/{data}.zip'
                 download(url, dir=data_dir.parent)
             s = f"Dataset download success ✅ ({time.time() - t:.1f}s), saved to {colorstr('bold', data_dir)}\n"
-            LOGGER.info(s)
+            LOGGER.info(s)'''
+
+    # REVIEW: change type path to str
+    # Hyperparameters
+    opt.hyp = str( opt.hyp )
+    with open(opt.hyp, errors='ignore') as f:
+        hyp = yaml.safe_load(f)  # load hyps dict
+    LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
+    opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
     # Dataloaders
-    nc = len([x for x in (data_dir / 'train').glob('*') if x.is_dir()])  # number of classes
+    '''nc = len([x for x in (data_dir / 'train').glob('*') if x.is_dir()])  # number of classes
     trainloader = create_classification_dataloader(path=data_dir / 'train',
                                                    imgsz=imgsz,
                                                    batch_size=bs // WORLD_SIZE,
                                                    augment=True,
                                                    cache=opt.cache,
                                                    rank=LOCAL_RANK,
+                                                   workers=nw)'''
+
+    trainloader = create_classification_dataloader(data=data_dict,
+                                                   mode='train',
+                                                   imgsz=imgsz,
+                                                   batch_size=bs // WORLD_SIZE,
+                                                   augment=True,
+                                                   cache=opt.cache,
+                                                   rank=LOCAL_RANK,
                                                    workers=nw)
+    return
+
 
     # REVIEW: add testloader and test_dir turn into val_dir 
     # test_dir = data_dir / 'test' if (data_dir / 'test').exists() else data_dir / 'val'  # data/test or data/val
-    val_dir = data_dir / 'val' #  data/val
+    '''val_dir = data_dir / 'val' #  data/val
     if RANK in {-1, 0}:
         valloader = create_classification_dataloader(path=val_dir,
                                                       imgsz=imgsz,
@@ -119,7 +144,7 @@ def train(opt, device):
                                                       augment=False,
                                                       cache=opt.cache,
                                                       rank=-1,
-                                                      workers=nw)
+                                                      workers=nw)'''
     # REVIEW: add opt.cfg to import model from yaml
     # Model
     with torch_distributed_zero_first(LOCAL_RANK), WorkingDirectory(ROOT):
@@ -159,7 +184,7 @@ def train(opt, device):
         model_info(model)
         if opt.verbose:
             LOGGER.info(model)
-        images, labels = next(iter(trainloader))
+        images, labels = next(iter(trainloader.dataset))
         file = imshow_cls(images[:25], labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
         logger.log_images(file, name='Train Examples')
         logger.log_graph(model, imgsz)  # log model
@@ -232,14 +257,14 @@ def train(opt, device):
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 pbar.desc = f"{f'{epoch + 1}/{epochs}':>10}{mem:>10}{tloss:>12.3g}" + ' ' * 36
 
-                # Test
+                '''# Test
                 if i == len(pbar) - 1:  # last batch
                     top1, top5, vloss = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
-                    fitness = top1  # define fitness as top1 accuracy
+                    fitness = top1  # define fitness as top1 accuracy'''
 
         # Scheduler
         scheduler.step()
@@ -278,7 +303,7 @@ def train(opt, device):
                     torch.save(ckpt, best)
                 del ckpt
 
-    # Train complete
+    '''# Train complete
     if RANK in {-1, 0} and final_epoch:
         LOGGER.info(f'\nTraining complete ({(time.time() - t0) / 3600:.3f} hours)'
                     f"\nResults saved to {colorstr('bold', save_dir)}"
@@ -308,7 +333,7 @@ def train(opt, device):
     test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
     
     # REVIEW: Write Report
-    WriteReport( test_batch_labels, test_batch_pred, save_dir, testloader.dataset.classes )
+    WriteReport( test_batch_labels, test_batch_pred, save_dir, testloader.dataset.classes )'''
 
 
 
@@ -338,6 +363,10 @@ def parse_opt(known=False):
     parser.add_argument('--verbose', action='store_true', help='Verbose mode')
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
     parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
+    parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
+    parser.add_argument('--rect', action='store_true', help='rectangular training')
+    parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
+    parser.add_argument('--quad', action='store_true', help='quad dataloader')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 

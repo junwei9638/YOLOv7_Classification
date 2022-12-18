@@ -482,6 +482,7 @@ class LoadImagesAndLabels(Dataset):
 
         # Check cache
         self.label_files = img2label_paths(self.im_files)  # labels
+        print( self.label_files )
         cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')
         try:
             cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
@@ -1158,7 +1159,6 @@ class HUBDatasetStats():
         return self.im_dir
 
 
-# TODO: dataset load from txt
 # Classification dataloaders -------------------------------------------------------------------------------------------
 class ClassificationDataset(torchvision.datasets.ImageFolder):
     """
@@ -1175,11 +1175,9 @@ class ClassificationDataset(torchvision.datasets.ImageFolder):
         self.album_transforms = classify_albumentations(augment, imgsz) if augment else None
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
-        self.classes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-        #print( self.samples )
         self.samples = [list(x) + [Path(x[0]).with_suffix('.npy'), None] for x in self.samples]  # file, index, npy, im
-        #for i in self.samples:
-            # print( i )
+        for i in self.samples:
+            print( i )
 
     def __getitem__(self, i):
         f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
@@ -1200,18 +1198,80 @@ class ClassificationDataset(torchvision.datasets.ImageFolder):
 
         return sample, j
 
+# TODO: dataset load from txt
+class ClassificationDatasetFromTxt(Dataset):
+    """
+    YOLOv5 Classification Dataset.
+    Arguments
+        root:  Dataset path
+        transform:  torchvision transforms, used by default
+        album_transform: Albumentations transforms, used if installed
+    """
 
-def create_classification_dataloader(path,
+    def __init__(self, yaml_data, mode, augment, imgsz, cache=False):
+        super().__init__()
+        self.torch_transforms = classify_transforms(imgsz)
+        self.album_transforms = classify_albumentations(augment, imgsz) if augment else None
+        self.cache_ram = cache is True or cache == 'ram'
+        self.cache_disk = cache == 'disk'
+        self.samples, self.classes = self.parse_label_file( yaml_data, mode )
+        
+
+    def parse_label_file( self, yaml_data, mode ):
+        samples = []
+        file_txt = yaml_data[ mode ] # train, val, test
+        classes = yaml_data['names']
+        print( classes )
+        with open( file_txt, 'r') as img_files:
+
+            for img in img_files:
+                img = img[:-1]  # remove "\n"
+                label_files = img[:-3] + "txt" 
+  
+                with open( label_files, 'r') as label_files:
+                    for label in label_files:
+                        label = label[:-1] # remove"\n"
+                        cls_index = int( label.split(" ")[0] )
+                        img_location = label.split(" ")[1:]   
+                        samples.append( [img ,cls_index, img_location] )
+
+        return samples, classes
+
+    def __getitem__(self, i):
+        f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
+        if self.cache_ram and im is None:
+            im = self.samples[i][3] = cv2.imread(f)
+        elif self.cache_disk:
+            if not fn.exists():  # load npy
+                np.save(fn.as_posix(), cv2.imread(f))
+            im = np.load(fn)
+        else:  # read image
+            im = cv2.imread(f)  # BGR
+            
+        if self.album_transforms:
+            sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
+        else:
+            sample = self.torch_transforms(im)
+        
+
+        return sample, j
+    
+
+def create_classification_dataloader(#path,
+                                     data,
+                                     mode,
                                      imgsz=224,
                                      batch_size=16,
                                      augment=True,
                                      cache=False,
                                      rank=-1,
                                      workers=8,
-                                     shuffle=True):
+                                     shuffle=True,
+                                     ):
     # Returns Dataloader object to be used with YOLOv5 Classifier
     with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
-        dataset = ClassificationDataset(root=path, imgsz=imgsz, augment=augment, cache=cache)
+        #dataset = ClassificationDataset( root=path, imgsz=imgsz, augment=augment, cache=cache)
+        dataset = ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache)
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])
