@@ -103,16 +103,6 @@ def train(opt, device):
     LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
-    # Dataloaders
-    '''nc = len([x for x in (data_dir / 'train').glob('*') if x.is_dir()])  # number of classes
-    trainloader = create_classification_dataloader(path=data_dir / 'train',
-                                                   imgsz=imgsz,
-                                                   batch_size=bs // WORLD_SIZE,
-                                                   augment=True,
-                                                   cache=opt.cache,
-                                                   rank=LOCAL_RANK,
-                                                   workers=nw)'''
-
     trainloader = create_classification_dataloader(data=data_dict,
                                                    mode='train',
                                                    imgsz=imgsz,
@@ -121,12 +111,41 @@ def train(opt, device):
                                                    cache=opt.cache,
                                                    rank=LOCAL_RANK,
                                                    workers=nw)
-    return
+    
+    valloader = create_classification_dataloader(data=data_dict,
+                                                   mode='val',
+                                                   imgsz=imgsz,
+                                                   batch_size=bs // WORLD_SIZE,
+                                                   augment=True,
+                                                   cache=opt.cache,
+                                                   rank=LOCAL_RANK,
+                                                   workers=nw)
+    
+    '''testloader = create_classification_dataloader(data=data_dict,
+                                                   mode='test',
+                                                   imgsz=imgsz,
+                                                   batch_size=bs // WORLD_SIZE,
+                                                   augment=True,
+                                                   cache=opt.cache,
+                                                   rank=LOCAL_RANK,
+                                                   workers=nw)'''
+    nc = int( data_dict["nc"] )
 
 
     # REVIEW: add testloader and test_dir turn into val_dir 
+    # Dataloaders
+    '''nc = len([x for x in (data_dir / 'train').glob('*') if x.is_dir()])  # number of classes
+    trainloader = create_classification_dataloader(path=data_dir / 'train',
+                                                   imgsz=imgsz,
+                                                   batch_size=bs // WORLD_SIZE,
+                                                   augment=True,
+                                                   cache=opt.cache,
+                                                   rank=LOCAL_RANK,
+                                                   workers=nw)
+    
+    
     # test_dir = data_dir / 'test' if (data_dir / 'test').exists() else data_dir / 'val'  # data/test or data/val
-    '''val_dir = data_dir / 'val' #  data/val
+    val_dir = data_dir / 'val' #  data/val
     if RANK in {-1, 0}:
         valloader = create_classification_dataloader(path=val_dir,
                                                       imgsz=imgsz,
@@ -180,18 +199,19 @@ def train(opt, device):
     # Info
     if RANK in {-1, 0}:
         model.names = trainloader.dataset.classes  # attach class names
-        model.transforms = valloader.dataset.torch_transforms  # attach inference transforms
+        #model.transforms = valloader.dataset.torch_transforms # attach inference transforms
+        model.transforms = valloader.dataset.album_transforms # attach inference transforms
         model_info(model)
         if opt.verbose:
             LOGGER.info(model)
-        images, labels = next(iter(trainloader.dataset))
-        file = imshow_cls(images[:25], labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
+        
+        # REVIEW: catch one train batch info with dataloader
+        batch_images, batch_labels = next(iter(trainloader))
+        file = imshow_cls(batch_images[:25], batch_labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
         logger.log_images(file, name='Train Examples')
         logger.log_graph(model, imgsz)  # log model
-
     # Optimizer
     optimizer = smart_optimizer(model, opt.optimizer, opt.lr0, momentum=0.9, decay=opt.decay)
-
     # Scheduler
     lrf = 0.01  # final lr (fraction of lr0)
     # lf = lambda x: ((1 + math.cos(x * math.pi / epochs)) / 2) * (1 - lrf) + lrf  # cosine
@@ -218,7 +238,11 @@ def train(opt, device):
     criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
     best_fitness = 0.0
     scaler = amp.GradScaler(enabled=cuda)
-    val = val_dir.stem  # 'val' or 'test'
+    
+    # REVIEW: make val directly
+    val = 'val'
+    #val = val_dir.stem  # 'val' or 'test'
+    
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} test\n'
                 f'Using {nw * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
@@ -257,14 +281,14 @@ def train(opt, device):
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 pbar.desc = f"{f'{epoch + 1}/{epochs}':>10}{mem:>10}{tloss:>12.3g}" + ' ' * 36
 
-                '''# Test
+                # Test
                 if i == len(pbar) - 1:  # last batch
                     top1, top5, vloss = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
-                    fitness = top1  # define fitness as top1 accuracy'''
+                    fitness = top1  # define fitness as top1 accuracy
 
         # Scheduler
         scheduler.step()
@@ -318,9 +342,8 @@ def train(opt, device):
         images, labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
         pred = torch.max(ema.ema(images.to(device)), 1)[1]
 
-        train_cls = trainloader.dataset.classes
-        test_cls = valloader.dataset.classes
-       # print( test_cls )
+        batch_images, batch_labels = next(iter(testloader))
+        file = imshow_cls(batch_images[:25], batch_labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
         file = imshow_cls(images, labels, pred, test_cls, train_cls, verbose=False, f=save_dir / 'test_images.jpg')
 
         # Log results

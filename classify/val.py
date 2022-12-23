@@ -100,7 +100,9 @@ def run(
     model.eval()
     pred, targets, loss, dt = [], [], 0, (Profile(), Profile(), Profile())
     n = len(dataloader)  # number of batches
-    action = 'validating' if dataloader.dataset.root.stem == 'val' else 'testing'
+    # REVIEW: make action directly
+    action = 'validating'
+    # action = 'validating' if dataloader.dataset.root.stem == 'val' else 'testing'
     desc = f"{pbar.desc[:-36]}{action:>36}" if pbar else f"{action}"
     bar = tqdm(dataloader, desc, n, not training, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', position=0)
     with torch.cuda.amp.autocast(enabled=device.type != 'cpu'):

@@ -348,9 +348,8 @@ def classify_transforms(size=224):
     # Transforms to apply if albumentations not installed
     assert isinstance(size, int), f'ERROR: classify_transforms size {size} must be integer, not (list, tuple)'
     # T.Compose([T.ToTensor(), T.Resize(size), T.CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    #return T.Compose([T.ToTensor(), T.Resize(size), T.RandomCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    return T.Compose([ Resize(size), ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-
+    # T.Compose([T.ToTensor(), T.Resize(size), T.RandomCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+    return T.Compose([T.ToTensor(), CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 class LetterBox:
     # YOLOv5 LetterBox class for image preprocessing, i.e. T.Compose([LetterBox(size), ToTensor()])
@@ -403,6 +402,7 @@ class Resize:
     def __init__(self, size=640):
         super().__init__()
         self.h, self.w = (size, size) if isinstance(size, int) else size
+        
 
     def __call__(self, im):  # im = np.array HWC
         return cv2.resize(im[0:self.h, 0:self.w], (self.w, self.h), interpolation=cv2.INTER_LINEAR)

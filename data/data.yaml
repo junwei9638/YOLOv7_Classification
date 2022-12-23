@@ -2,4 +2,5 @@ train: /home/lab602.our_container/.pipeline/11077006/traffic_sign/train.txt
 val: /home/lab602.our_container/.pipeline/11077006/traffic_sign/val.txt
 
 # Classes
+nc: 4
 names: ['prohibitory', 'danger', 'mandatory', 'other']

@@ -462,6 +462,8 @@ def imshow_cls(im, labels=None, pred=None, test_cls=None, names=None, nmax=25, v
         ax[i].imshow(blocks[i].squeeze().permute((1, 2, 0)).numpy().clip(0.0, 1.0))
         ax[i].axis('off')
         if labels is not None:
+            # REVIEW: Turn tensors into np.array
+            labels = np.array( labels )
             if test_cls is not None:
                 s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred[i]]}' if pred is not None else '')
             else:

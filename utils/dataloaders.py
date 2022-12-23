@@ -1176,8 +1176,6 @@ class ClassificationDataset(torchvision.datasets.ImageFolder):
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
         self.samples = [list(x) + [Path(x[0]).with_suffix('.npy'), None] for x in self.samples]  # file, index, npy, im
-        for i in self.samples:
-            print( i )
 
     def __getitem__(self, i):
         f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
@@ -1195,7 +1193,6 @@ class ClassificationDataset(torchvision.datasets.ImageFolder):
         else:
             sample = self.torch_transforms(im)
         
-
         return sample, j
 
 # TODO: dataset load from txt
@@ -1215,13 +1212,15 @@ class ClassificationDatasetFromTxt(Dataset):
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
         self.samples, self.classes = self.parse_label_file( yaml_data, mode )
-        
+        self.indices = range( self.dataSize )
+        self.img_size = imgsz
+        self.augment = augment
+        self.labels=[]
 
     def parse_label_file( self, yaml_data, mode ):
         samples = []
         file_txt = yaml_data[ mode ] # train, val, test
         classes = yaml_data['names']
-        print( classes )
         with open( file_txt, 'r') as img_files:
 
             for img in img_files:
@@ -1233,31 +1232,50 @@ class ClassificationDatasetFromTxt(Dataset):
                         label = label[:-1] # remove"\n"
                         cls_index = int( label.split(" ")[0] )
                         img_location = label.split(" ")[1:]   
-                        samples.append( [img ,cls_index, img_location] )
-
+                        samples.append( [img ,cls_index, img_location, Path(img).with_suffix('.npy'), None] )
+        
+        self.dataSize = len(samples)
         return samples, classes
+    
+    def readImg( self, file, pos ):
+        img = cv2.imread( file )
+        height = img.shape[0]
+        width = img.shape[1]
+        x = float(pos[0]) * width
+        y = float(pos[1]) * height
+        w = float(pos[2]) * width
+        h = float(pos[3]) * height
+        xmin = int( x - w/2 )
+        xmax = int( x + w/2 )
+        ymin = int( y - h/2 )
+        ymax = int( y + h/2 )
+        img = img[ymin:ymax, xmin:xmax ]
+        return img
 
-    def __getitem__(self, i):
-        f, j, fn, im = self.samples[i]  # filename, index, filename.with_suffix('.npy'), image
+    def __getitem__(self, index ):
+        index = self.indices[index]
+        f, label, pos, fn, im = self.samples[index]  # filename, index, filename.with_suffix('.npy'), image
         if self.cache_ram and im is None:
-            im = self.samples[i][3] = cv2.imread(f)
+            im = self.samples[index][4] = self.readImg( f, pos )
         elif self.cache_disk:
             if not fn.exists():  # load npy
-                np.save(fn.as_posix(), cv2.imread(f))
+                np.save(fn.as_posix(), self.readImg( f, pos ))
             im = np.load(fn)
         else:  # read image
-            im = cv2.imread(f)  # BGR
-            
-        if self.album_transforms:
-            sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
-        else:
-            sample = self.torch_transforms(im)
-        
+            im = self.readImg( f, pos )  # BGR
 
-        return sample, j
+        assert im is not None, f'Image Not Found {f}'
+        assert label is not None, f'Label Not Found {f}'
+        
+        sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
+
+        return sample, label
+    
+    def __len__(self):
+        return self.dataSize
     
 
-def create_classification_dataloader(#path,
+def create_classification_dataloader(# path,
                                      data,
                                      mode,
                                      imgsz=224,
@@ -1265,7 +1283,7 @@ def create_classification_dataloader(#path,
                                      augment=True,
                                      cache=False,
                                      rank=-1,
-                                     workers=8,
+                                     workers=0,
                                      shuffle=True,
                                      ):
     # Returns Dataloader object to be used with YOLOv5 Classifier
