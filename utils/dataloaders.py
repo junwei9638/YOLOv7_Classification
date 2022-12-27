@@ -1208,7 +1208,7 @@ class ClassificationDatasetFromTxt(Dataset):
     def __init__(self, yaml_data, mode, augment, imgsz, cache=False):
         super().__init__()
         self.torch_transforms = classify_transforms(imgsz)
-        self.album_transforms = classify_albumentations(augment, imgsz) if augment else None
+        self.album_transforms = classify_albumentations(augment, imgsz, mode=mode) if augment else None
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
         self.samples, self.classes = self.parse_label_file( yaml_data, mode )
@@ -1224,7 +1224,8 @@ class ClassificationDatasetFromTxt(Dataset):
         with open( file_txt, 'r') as img_files:
 
             for img in img_files:
-                img = img[:-1]  # remove "\n"
+                if img[-1] == "\n":  # remove "\n"
+                    img = img[:-1]  
                 label_files = img[:-3] + "txt" 
   
                 with open( label_files, 'r') as label_files:

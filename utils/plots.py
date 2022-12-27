@@ -464,10 +464,12 @@ def imshow_cls(im, labels=None, pred=None, test_cls=None, names=None, nmax=25, v
         if labels is not None:
             # REVIEW: Turn tensors into np.array
             labels = np.array( labels )
+            
+            # REVIEW: cahnge test_images output 
             if test_cls is not None:
-                s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred[i]]}' if pred is not None else '')
+                s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred.tolist()[i]]}' if pred is not None else '')
             else:
-                s =  "gt:" + names[labels[i]] + (f', pred:{names[pred[i]]}' if pred is not None else '')
+                s =  "gt:" + names[labels[i]]
             ax[i].set_title(s, fontsize=8, verticalalignment='top')
     plt.savefig(f, dpi=300, bbox_inches='tight')
     plt.close()
@@ -581,26 +583,27 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
         Image.fromarray(crop[..., ::-1]).save(f, quality=95, subsampling=0)  # save RGB
     return crop
 
+# REVIEW: add write report function
 def WriteReport(target, pred, save_dir, classes):
+    classes = list(classes)
     confusion_matrix = ms.confusion_matrix( y_true=target.cpu().numpy(), y_pred=pred.cpu().numpy(), labels=list(map(int, np.unique(classes))) ) 
     cls_report = ms.classification_report(target.cpu().numpy(), pred.cpu().numpy(), zero_division=0)
     
     with open( os.path.join(save_dir, "cls_report.txt"), 'a') as f:
         f.write( cls_report )
 
-    test_classes = sorted( [eval(i) for i in np.unique( classes ).tolist()] ) 
     with open( os.path.join(save_dir, "confision_matrix.txt"), 'a') as f:
         f.write("\t" + "|" + "\t" )
-        for i in test_classes :
+        for i in classes :
             f.write( str(i) + "\t")
         f.write( "\n" )
 
-        for i in range( len( test_classes ) ) :
+        for i in range( len( classes ) ) :
             f.write( "-----" )
         f.write( "\n" )
 
         for i, row in enumerate(confusion_matrix):
-            f.write( str(test_classes[i]) + "\t" + "|" + "\t")
+            f.write( str(classes[i]) + "\t" + "|" + "\t")
             for j in row:
                 f.write(np.array2string( j ) + "\t")
             f.write( "\n" )

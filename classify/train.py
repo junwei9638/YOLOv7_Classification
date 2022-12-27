@@ -121,14 +121,14 @@ def train(opt, device):
                                                    rank=LOCAL_RANK,
                                                    workers=nw)
     
-    '''testloader = create_classification_dataloader(data=data_dict,
+    testloader = create_classification_dataloader(data=data_dict,
                                                    mode='test',
                                                    imgsz=imgsz,
                                                    batch_size=bs // WORLD_SIZE,
                                                    augment=True,
                                                    cache=opt.cache,
                                                    rank=LOCAL_RANK,
-                                                   workers=nw)'''
+                                                   workers=nw)
     nc = int( data_dict["nc"] )
 
 
@@ -256,12 +256,12 @@ def train(opt, device):
         pbar = enumerate(trainloader)
         if RANK in {-1, 0}:
             pbar = tqdm(enumerate(trainloader), total=len(trainloader), bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')
-        for i, (images, labels) in pbar:  # progress bar
-            images, labels = images.to(device, non_blocking=True), labels.to(device)
+        for i, (val_batch_images, val_batch_labels) in pbar:  # progress bar
+            val_batch_images, val_batch_labels = val_batch_images.to(device, non_blocking=True), val_batch_labels.to(device)
 
             # Forward
             with amp.autocast(enabled=cuda):  # stability issues when enabled
-                loss = criterion(model(images), labels)
+                loss = criterion(model(val_batch_images), val_batch_labels)
 
             # Backward
             scaler.scale(loss).backward()
@@ -327,24 +327,21 @@ def train(opt, device):
                     torch.save(ckpt, best)
                 del ckpt
 
-    '''# Train complete
+    # Train complete
     if RANK in {-1, 0} and final_epoch:
         LOGGER.info(f'\nTraining complete ({(time.time() - t0) / 3600:.3f} hours)'
                     f"\nResults saved to {colorstr('bold', save_dir)}"
                     f"\nPredict:         python classify/predict.py --weights {best} --source im.jpg"
-                    f"\nValidate:        python classify/val.py --weights {best} --data {data_dir}"
+                    f"\nValidate:        python classify/val.py --weights {best} --data {data_dict['test']}"
                     f"\nExport:          python export.py --weights {best} --include onnx"
                     f"\nPyTorch Hub:     model = torch.hub.load('ultralytics/yolov5', 'custom', '{best}')"
                     f"\nVisualize:       https://netron.app\n")
 
         # Plot examples
         # REVIEW: add cls_names to solve the problem that nn.DataParallel has no the attribute of name
-        images, labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
-        pred = torch.max(ema.ema(images.to(device)), 1)[1]
-
-        batch_images, batch_labels = next(iter(testloader))
-        file = imshow_cls(batch_images[:25], batch_labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
-        file = imshow_cls(images, labels, pred, test_cls, train_cls, verbose=False, f=save_dir / 'test_images.jpg')
+        val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
+        val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
+        file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'val_images.jpg')
 
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}
@@ -353,10 +350,11 @@ def train(opt, device):
 
     # REVIEW: Test model
     test_batch_images, test_batch_labels = next(iter(testloader))
-    test_batch_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
+    test_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
+    file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
     
     # REVIEW: Write Report
-    WriteReport( test_batch_labels, test_batch_pred, save_dir, testloader.dataset.classes )'''
+    WriteReport( test_batch_labels, test_pred, save_dir, testloader.dataset.classes )
 
 
 

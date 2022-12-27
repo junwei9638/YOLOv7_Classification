@@ -301,26 +301,29 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  
     ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
     return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
-
+# REVIEW: add mode in classify_albumentations
 def classify_albumentations(
         augment=True,
         size=224,
         scale=(0.08, 1.0),
         ratio=(0.75, 1.0 / 0.75),  # 0.75, 1.33
-        hflip=0.5,
+        hflip=0.0,
         vflip=0.0,
-        jitter=0.4,
+        jitter=0.0,
         mean=IMAGENET_MEAN,
         std=IMAGENET_STD,
-        auto_aug=False):
+        auto_aug=False,
+        mode=None):
     # YOLOv5 classification Albumentations (optional, only used if package is installed)
-    prefix = colorstr('albumentations: ')
+    prefix = colorstr( mode + ' albumentations: ')
     try:
         import albumentations as A
         from albumentations.pytorch import ToTensorV2
         check_version(A.__version__, '1.0.3', hard=True)  # version requirement
         if augment:  # Resize and crop
-            T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
+            # T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
+            T = [A.augmentations.geometric.resize.LongestMaxSize (max_size=size, interpolation=1, always_apply=False, p=1)]
+            T += [A.PadIfNeeded(min_height=size, min_width=size, border_mode=0, value=(0,0,0))]
             if auto_aug:
                 # TODO: implement AugMix, AutoAug & RandAug in albumentation
                 LOGGER.info(f'{prefix}auto augmentations are currently not supported')
@@ -335,6 +338,7 @@ def classify_albumentations(
         else:  # Use fixed crop for eval set (reproducibility)
             T = [A.SmallestMaxSize(max_size=size), A.CenterCrop(height=size, width=size)]
         T += [A.Normalize(mean=mean, std=std), ToTensorV2()]  # Normalize and convert to Tensor
+        
         LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
         return A.Compose(T)
 
