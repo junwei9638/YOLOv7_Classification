@@ -111,7 +111,7 @@ def train(opt, device):
                                                    cache=opt.cache,
                                                    rank=LOCAL_RANK,
                                                    workers=nw)
-    
+
     valloader = create_classification_dataloader(data=data_dict,
                                                    mode='val',
                                                    imgsz=imgsz,
@@ -256,12 +256,12 @@ def train(opt, device):
         pbar = enumerate(trainloader)
         if RANK in {-1, 0}:
             pbar = tqdm(enumerate(trainloader), total=len(trainloader), bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')
-        for i, (val_batch_images, val_batch_labels) in pbar:  # progress bar
-            val_batch_images, val_batch_labels = val_batch_images.to(device, non_blocking=True), val_batch_labels.to(device)
+        for i, (images, labels) in pbar:  # progress bar
+            images, labels = images.to(device, non_blocking=True), labels.to(device)
 
             # Forward
             with amp.autocast(enabled=cuda):  # stability issues when enabled
-                loss = criterion(model(val_batch_images), val_batch_labels)
+                loss = criterion(model(images), labels)
 
             # Backward
             scaler.scale(loss).backward()

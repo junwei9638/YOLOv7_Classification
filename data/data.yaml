@@ -3,4 +3,4 @@ val: /home/lab602.our_container/.pipeline/11077006/traffic_sign/val.txt
 test: /home/lab602.our_container/.pipeline/11077006/traffic_sign/test.txt
 # Classes
 nc: 4
-names: ['prohibitory', 'danger', 'mandatory', 'other']
+names: ['danger', '2', '3', 'other']

@@ -469,6 +469,7 @@ def imshow_cls(im, labels=None, pred=None, test_cls=None, names=None, nmax=25, v
             if test_cls is not None:
                 s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred.tolist()[i]]}' if pred is not None else '')
             else:
+                #print( names,labels[i] )
                 s =  "gt:" + names[labels[i]]
             ax[i].set_title(s, fontsize=8, verticalalignment='top')
     plt.savefig(f, dpi=300, bbox_inches='tight')
