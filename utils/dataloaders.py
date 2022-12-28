@@ -1227,11 +1227,11 @@ class ClassificationDatasetFromTxt(Dataset):
                 if img[-1] == "\n":  # remove "\n"
                     img = img[:-1]  
                 label_files = img[:-3] + "txt" 
-  
+
                 with open( label_files, 'r') as label_files:
                     for label in label_files:
                         label = label[:-1] # remove"\n"
-                        cls_index = int( label.split(" ")[0] )
+                        cls_index = int(label.split(" ")[0])
                         img_location = label.split(" ")[1:]   
                         samples.append( [img ,cls_index, img_location, Path(img).with_suffix('.npy'), None] )
         
@@ -1268,8 +1268,12 @@ class ClassificationDatasetFromTxt(Dataset):
         assert im is not None, f'Image Not Found {f}'
         assert label is not None, f'Label Not Found {f}'
         
-        sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
+        '''try:
+            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+        except:
+            print( f )'''
 
+        sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
         return sample, label
     
     def __len__(self):
