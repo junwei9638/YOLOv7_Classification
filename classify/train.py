@@ -48,7 +48,7 @@ import pandas as pd
 
 # REVIEW: import check_yaml
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
-                           download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset)
+                           download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset, check_file, get_latest_run)
 from utils.loggers import GenericLogger
 from utils.plots import imshow_cls, WriteReport
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
@@ -325,6 +325,12 @@ def train(opt, device):
                 torch.save(ckpt, last)
                 if best_fitness == fitness:
                     torch.save(ckpt, best)
+
+                    #REVIEW: write best result while validation
+                    val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
+                    val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
+                    file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
+                    WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
 
     # Train complete
@@ -341,20 +347,21 @@ def train(opt, device):
         # REVIEW: add cls_names to solve the problem that nn.DataParallel has no the attribute of name
         val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
         val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
-        file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'val_images.jpg')
+        file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
 
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}
         logger.log_images(file, name='Test Examples (true-predicted)', epoch=epoch)
         logger.log_model(best, epochs, metadata=meta)
 
-    # REVIEW: Test model
+    # REVIEW: Test best model
+    best_model = torch.hub.load( '.', 'custom', path=best, source='local' )
     test_batch_images, test_batch_labels = next(iter(testloader))
-    test_pred = torch.max(ema.ema(test_batch_images.to(device)), 1)[1]
+    test_pred = torch.max( best_model(test_batch_images.to(device) ), 1)[1]
     file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
     
     # REVIEW: Write Report
-    WriteReport( test_batch_labels, test_pred, save_dir, testloader.dataset.classes )
+    WriteReport( test_batch_labels, test_pred, save_dir, testloader.dataset.classes, 'test' )
 
 
 
@@ -388,6 +395,7 @@ def parse_opt(known=False):
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
+    parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
@@ -397,6 +405,23 @@ def main(opt):
         print_args(vars(opt))
         check_git_status()
         check_requirements()
+
+    # TODO: add Resume to classify 
+    # Resume (from specified or most recent last.pt)
+    if opt.resume :
+        last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
+        opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
+        opt_data = opt.data  # original dataset
+        if opt_yaml.is_file():
+            with open(opt_yaml, errors='ignore') as f:
+                d = yaml.safe_load(f)
+        else:
+            d = torch.load(last, map_location='cpu')['opt']
+        opt = argparse.Namespace(**d)  # replace
+        opt.cfg, opt.weights, opt.resume = '', str(last), True  # reinstate
+        '''if is_url(opt_data):
+            opt.data = check_file(opt_data)  # avoid HUB resume auth timeout'''
+
 
     # DDP mode
     device = select_device(opt.device, batch_size=opt.batch_size)

@@ -585,15 +585,15 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
     return crop
 
 # REVIEW: add write report function
-def WriteReport(target, pred, save_dir, classes):
+def WriteReport(target, pred, save_dir, classes, mode):
     classes = list(classes)
     confusion_matrix = ms.confusion_matrix( y_true=target.cpu().numpy(), y_pred=pred.cpu().numpy(), labels=list(map(int, np.unique(classes))) ) 
     cls_report = ms.classification_report(target.cpu().numpy(), pred.cpu().numpy(), zero_division=0)
     
-    with open( os.path.join(save_dir, "cls_report.txt"), 'a') as f:
+    with open( os.path.join(save_dir, mode + "_cls_report.txt"), 'a') as f:
         f.write( cls_report )
 
-    with open( os.path.join(save_dir, "confision_matrix.txt"), 'a') as f:
+    with open( os.path.join(save_dir, mode + "_confision_matrix.txt"), 'a') as f:
         f.write("\t" + "|" + "\t" )
         for i in classes :
             f.write( str(i) + "\t")
