@@ -590,10 +590,10 @@ def WriteReport(target, pred, save_dir, classes, mode):
     confusion_matrix = ms.confusion_matrix( y_true=target.cpu().numpy(), y_pred=pred.cpu().numpy(), labels=list(map(int, np.unique(classes))) ) 
     cls_report = ms.classification_report(target.cpu().numpy(), pred.cpu().numpy(), zero_division=0)
     
-    with open( os.path.join(save_dir, mode + "_cls_report.txt"), 'a') as f:
+    with open( os.path.join(save_dir, mode + "_cls_report.txt"), 'w') as f:
         f.write( cls_report )
 
-    with open( os.path.join(save_dir, mode + "_confision_matrix.txt"), 'a') as f:
+    with open( os.path.join(save_dir, mode + "_confision_matrix.txt"), 'w') as f:
         f.write("\t" + "|" + "\t" )
         for i in classes :
             f.write( str(i) + "\t")
@@ -608,3 +608,17 @@ def WriteReport(target, pred, save_dir, classes, mode):
             for j in row:
                 f.write(np.array2string( j ) + "\t")
             f.write( "\n" )
+            
+def PlotProbDistribution( pred_prob, gt_label, path, epoch) :
+    pred_prob = pred_prob.tolist()
+    gt_label = gt_label.tolist()
+    pred_prob = [ pred * 100 for pred in pred_prob ]
+    label_range = np.arange(0, 360)
+    
+    text = plt.figure().add_subplot()
+    text.text( gt_label, 100, str(gt_label), fontsize=10, fontweight='bold')
+    plt.plot( label_range, pred_prob, 'r.')
+    plt.bar( gt_label, 100, color='blue', width=3 )
+    plt.ylabel('Probability')
+    plt.xlabel('Angle')
+    plt.savefig( path / ( 'best_prob_dis_epoch' + str(epoch) ) )

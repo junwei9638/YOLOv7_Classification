@@ -50,7 +50,7 @@ import pandas as pd
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
                            download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset, check_file, get_latest_run)
 from utils.loggers import GenericLogger
-from utils.plots import imshow_cls, WriteReport
+from utils.plots import imshow_cls, WriteReport, PlotProbDistribution
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
                                smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
@@ -327,9 +327,15 @@ def train(opt, device):
                     torch.save(ckpt, best)
 
                     #REVIEW: write best result while validation
-                    val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
+                    val_batch_images, val_batch_labels = next(iter(valloader))
                     val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
                     file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
+                    
+                    if not os.path.exists( save_dir / 'best_prob_dis' ):
+                        prob_save_dir = save_dir / 'best_prob_dis'
+                        os.mkdir( prob_save_dir )
+                    
+                    PlotProbDistribution( ema.ema(val_batch_images.to(device))[0][:], val_batch_labels[0], prob_save_dir, epoch )
                     WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
 
@@ -344,7 +350,7 @@ def train(opt, device):
                     f"\nVisualize:       https://netron.app\n")
 
         # Plot examples
-        # REVIEW: add cls_names to solve the problem that nn.DataParallel has no the attribute of name
+        # REVIEW: add cls_names to solve the problem that nn.DataParallel has no attribute of name
         val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
         val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
         file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
