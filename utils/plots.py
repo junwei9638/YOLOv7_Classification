@@ -612,13 +612,15 @@ def WriteReport(target, pred, save_dir, classes, mode):
 def PlotProbDistribution( pred_prob, gt_label, path, epoch) :
     pred_prob = pred_prob.tolist()
     gt_label = gt_label.tolist()
-    pred_prob = [ pred * 100 for pred in pred_prob ]
+    # pred_prob = [ pred * 100 for pred in pred_prob ]
     label_range = np.arange(0, 360)
     
+    text_position = max( pred_prob ) + 0.2
+    bar_length = max( pred_prob ) - min( pred_prob )
     text = plt.figure().add_subplot()
-    text.text( gt_label, 100, str(gt_label), fontsize=10, fontweight='bold')
+    text.text( gt_label, text_position, 'gt: '+ str(gt_label), fontsize=13, fontweight='bold')
     plt.plot( label_range, pred_prob, 'r.')
-    plt.bar( gt_label, 100, color='blue', width=3 )
-    plt.ylabel('Probability')
+    plt.bar( gt_label, bar_length, bottom=min( pred_prob ), color='blue', width=3 )
+    plt.ylabel('Linear Layer Output Value')
     plt.xlabel('Angle')
     plt.savefig( path / ( 'best_prob_dis_epoch' + str(epoch) ) )

@@ -22,6 +22,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import yaml
+import shutil
 
 import torch
 import torch.distributed as dist
@@ -402,6 +403,7 @@ def parse_opt(known=False):
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
+    parser.add_argument('--overwrite', action='store_true', help='overwrite the project')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
@@ -440,6 +442,15 @@ def main(opt):
         dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
 
     # Parameters
+    # REVIEW: add overwrite argument 
+    if opt.overwrite:
+        overwrite_path = os.path.join( os.getcwd(),'runs','train-cls', opt.name )
+        if os.path.exists( overwrite_path ) :
+            LOGGER.info( f'Overwrite Path: {opt.name}')
+            shutil.rmtree( overwrite_path )
+        else : 
+            LOGGER.info( 'NO DIRECTORY TO OVERWRITE !!')
+
     opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
 
     # Train

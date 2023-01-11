@@ -324,9 +324,9 @@ def classify_albumentations(
             # T = [A.RandomResizedCrop(height=size, width=size, scale=scale, ratio=ratio)]
             
             # REVIEW: add resize and padding augmentation
+            T = [A.RandomCrop(height=int(size/5*3), width=int(size/5*3), p=0.3 )]
             T = [A.augmentations.geometric.resize.LongestMaxSize (max_size=size, interpolation=1, always_apply=False, p=1)]
             T += [A.PadIfNeeded(min_height=size, min_width=size, border_mode=0, value=(0,0,0))]
-            T += [A.RandomCrop(height=int(size/5*3), width=int(size/5*3) )]
             if auto_aug:
                 # TODO: implement AugMix, AutoAug & RandAug in albumentation
                 LOGGER.info(f'{prefix}auto augmentations are currently not supported')
