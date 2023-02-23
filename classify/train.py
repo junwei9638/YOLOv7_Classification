@@ -51,9 +51,10 @@ import pandas as pd
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
                            download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset, check_file, get_latest_run)
 from utils.loggers import GenericLogger
-from utils.plots import imshow_cls, WriteReport, PlotProbDistribution
+from utils.plots import imshow_cls, WriteReport, Plot_Prob_Distribution, Plot_Wrong_Sample_Distribution
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
                                smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
+
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
@@ -174,6 +175,10 @@ def train(opt, device):
         elif opt.model in torchvision.models.__dict__:  # TorchVision models i.e. resnet50, efficientnet_b0
             model = torchvision.models.__dict__[opt.model](weights='IMAGENET1K_V1' if pretrained else None)
 
+        elif opt.resume:
+            weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
+            model = torch.load( weights )
+        
         elif opt.cfg is not None : 
             LOGGER.info( "Loading Model from yaml................" ) 
             check_yaml(opt.cfg)
@@ -236,13 +241,25 @@ def train(opt, device):
 
     # Train
     t0 = time.time()
+    # REVIEW: change to Focal loss
     criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
+    '''criterion = hub.load(
+        'adeelh/pytorch-multi-class-focal-loss',
+        model='focal_loss',
+        alpha=None,
+        gamma=2,
+        device=device,
+        reduction='mean',
+        force_reload=False
+    )'''
+
     best_fitness = 0.0
     scaler = amp.GradScaler(enabled=cuda)
     
     # REVIEW: make val directly
     val = 'val'
     #val = val_dir.stem  # 'val' or 'test'
+
     
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} test\n'
                 f'Using {nw * WORLD_SIZE} dataloader workers\n'
@@ -250,6 +267,7 @@ def train(opt, device):
                 f'Starting training on {data} dataset with {nc} classes for {epochs} epochs...\n\n'
                 f"{'Epoch':>10}{'GPU_mem':>10}{'train_loss':>12}{f'{val}_loss':>12}{'top1_acc':>12}{'top5_acc':>12}")
     for epoch in range(epochs):  # loop over the dataset multiple times
+
         tloss, vloss, fitness = 0.0, 0.0, 0.0  # train loss, val loss, fitness
         model.train()
         if RANK != -1:
@@ -262,8 +280,10 @@ def train(opt, device):
 
             # Forward
             with amp.autocast(enabled=cuda):  # stability issues when enabled
-                loss = criterion(model(images), labels)
-
+                
+                preds = model( images )
+                loss = criterion( preds, labels )
+            
             # Backward
             scaler.scale(loss).backward()
 
@@ -284,15 +304,36 @@ def train(opt, device):
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
                     fitness = top1  # define fitness as top1 accuracy
 
+
         # Scheduler
         scheduler.step()
+        
+
+
+        # REVIEW: add value distribution after val
+        val_batch_images, val_batch_labels = next(iter(valloader))
+        
+        if not os.path.exists( save_dir / 'prob_dis' ):
+            prob_save_dir = save_dir / 'prob_dis'
+            os.mkdir( prob_save_dir )
+
+        # REVIEW: plot value distribution
+        val_batch_pred = ema.ema(val_batch_images.to(device))
+        Plot_Prob_Distribution( val_batch_pred, val_batch_labels, prob_save_dir, epoch )
+        
+        # REVIEW: add Wrong value distribution after val
+        if not os.path.exists( save_dir / 'wrong_dis' ):
+            wrong_preds_save_dir = save_dir / 'wrong_dis'
+            os.mkdir( wrong_preds_save_dir )
+        Plot_Wrong_Sample_Distribution( wrong_preds, wrong_preds_save_dir, epoch )
+
 
         # Log metrics
         if RANK in {-1, 0}:
@@ -328,15 +369,8 @@ def train(opt, device):
                     torch.save(ckpt, best)
 
                     #REVIEW: write best result while validation
-                    val_batch_images, val_batch_labels = next(iter(valloader))
                     val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
                     file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
-                    
-                    if not os.path.exists( save_dir / 'best_prob_dis' ):
-                        prob_save_dir = save_dir / 'best_prob_dis'
-                        os.mkdir( prob_save_dir )
-                    
-                    PlotProbDistribution( ema.ema(val_batch_images.to(device))[0][:], val_batch_labels[0], prob_save_dir, epoch )
                     WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
 
@@ -403,7 +437,7 @@ def parse_opt(known=False):
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
-    parser.add_argument('--overwrite', action='store_true', help='overwrite the project')
+    parser.add_argument('--overwrite', action='store_true', default=False,help='overwrite the project')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
@@ -413,6 +447,15 @@ def main(opt):
         print_args(vars(opt))
         check_git_status()
         check_requirements()
+        
+    # REVIEW: add overwrite argument 
+    if opt.overwrite:
+        overwrite_path = os.path.join( os.getcwd(),'runs','train-cls', opt.name )
+        if os.path.exists( overwrite_path ) :
+            LOGGER.info( f'Overwrite Path: {opt.name}')
+            shutil.rmtree( overwrite_path )
+        else : 
+            LOGGER.info( 'NO DIRECTORY TO OVERWRITE !!')
 
     # TODO: add Resume to classify 
     # Resume (from specified or most recent last.pt)
@@ -442,15 +485,6 @@ def main(opt):
         dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
 
     # Parameters
-    # REVIEW: add overwrite argument 
-    if opt.overwrite:
-        overwrite_path = os.path.join( os.getcwd(),'runs','train-cls', opt.name )
-        if os.path.exists( overwrite_path ) :
-            LOGGER.info( f'Overwrite Path: {opt.name}')
-            shutil.rmtree( overwrite_path )
-        else : 
-            LOGGER.info( 'NO DIRECTORY TO OVERWRITE !!')
-
     opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
 
     # Train

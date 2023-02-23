@@ -98,7 +98,7 @@ def run(
                                                       workers=workers)
 
     model.eval()
-    pred, targets, loss, dt = [], [], 0, (Profile(), Profile(), Profile())
+    wrong_preds, pred, targets, loss, dt = [], [], [], 0, (Profile(), Profile(), Profile())
     n = len(dataloader)  # number of batches
     # REVIEW: make action directly
     action = 'validating'
@@ -111,7 +111,7 @@ def run(
                 images, labels = images.to(device, non_blocking=True), labels.to(device)
 
             with dt[1]:
-                y = model(images)
+                y = model( images ) 
 
             with dt[2]:
                 pred.append(y.argsort(1, descending=True)[:, :5])
@@ -121,6 +121,12 @@ def run(
 
     loss /= n
     pred, targets = torch.cat(pred), torch.cat(targets)
+    
+    # REVIEW: get the wrong pred samples
+    for i, target in enumerate(targets):
+        if pred[i][0] != target:
+            wrong_preds.append( [pred[i][0], target])
+
     correct = (targets[:, None] == pred).float()
     acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
     top1, top5 = acc.mean(0).tolist()
@@ -141,7 +147,7 @@ def run(
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms post-process per image at shape {shape}' % t)
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
 
-    return top1, top5, loss
+    return top1, top5, loss, wrong_preds
 
 
 def parse_opt():

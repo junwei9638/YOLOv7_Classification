@@ -609,18 +609,30 @@ def WriteReport(target, pred, save_dir, classes, mode):
                 f.write(np.array2string( j ) + "\t")
             f.write( "\n" )
             
-def PlotProbDistribution( pred_prob, gt_label, path, epoch) :
-    pred_prob = pred_prob.tolist()
-    gt_label = gt_label.tolist()
-    # pred_prob = [ pred * 100 for pred in pred_prob ]
-    label_range = np.arange(0, 360)
-    
-    text_position = max( pred_prob ) + 0.2
-    bar_length = max( pred_prob ) - min( pred_prob )
-    text = plt.figure().add_subplot()
-    text.text( gt_label, text_position, 'gt: '+ str(gt_label), fontsize=13, fontweight='bold')
-    plt.plot( label_range, pred_prob, 'r.')
-    plt.bar( gt_label, bar_length, bottom=min( pred_prob ), color='blue', width=3 )
-    plt.ylabel('Linear Layer Output Value')
-    plt.xlabel('Angle')
-    plt.savefig( path / ( 'best_prob_dis_epoch' + str(epoch) ) )
+def Plot_Prob_Distribution( pred_prob, gt_label, path, epoch) :
+    for i in range(1, 5):
+        pred = pred_prob[i][:].tolist()
+        label = gt_label[i].tolist()
+        label_range = np.arange(0, 360)
+        text_position = max( pred ) + 1
+        bar_length = max( pred ) - min( pred )
+        plt.subplot( 2, 2, i )
+        plt.bar( label, bar_length, bottom=min( pred ), color='blue', width=4 )
+        plt.ylabel('Value', fontsize=10)
+        plt.xlabel('Angle', fontsize=10)
+        plt.title('gt: '+ str(label), fontsize=10)
+        plt.subplots_adjust(wspace=0.5, hspace=0.5)
+        plt.plot( label_range, pred, 'r-')
+    plt.savefig( path / ( 'prob_dis_epoch' + str(epoch) ) )
+    plt.close()
+
+def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
+    preds, targets = zip(*wrong_preds)
+    preds = [int(pred.cpu().numpy()) for pred in preds] 
+    targets = [ int(target.cpu().numpy()) for target in targets]
+    plt.title('Wrong Samples Distribution', fontsize=20)
+    plt.ylabel( 'Preds', fontsize=10 )
+    plt.xlabel( 'Labels', fontsize=10 )
+    plt.plot( targets, preds, 'r.')
+    plt.savefig( path / ( 'wrong_preds_epoch' + str(epoch) ) )
+    plt.close()

@@ -1207,8 +1207,6 @@ class ClassificationDatasetFromTxt(Dataset):
 
     def __init__(self, yaml_data, mode, augment, imgsz, cache=False):
         super().__init__()
-        self.torch_transforms = classify_transforms(imgsz)
-        self.album_transforms = classify_albumentations(augment, imgsz, mode=mode) if augment else None
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
         self.samples, self.classes = self.parse_label_file( yaml_data, mode )
@@ -1216,6 +1214,8 @@ class ClassificationDatasetFromTxt(Dataset):
         self.img_size = imgsz
         self.augment = augment
         self.labels=[]
+        self.torch_transforms = classify_transforms(imgsz)
+        self.album_transforms = classify_albumentations(augment, imgsz, mode=mode) if augment else None
 
     def parse_label_file( self, yaml_data, mode ):
         samples = []
@@ -1246,10 +1246,11 @@ class ClassificationDatasetFromTxt(Dataset):
         y = float(pos[1]) * height
         w = float(pos[2]) * width
         h = float(pos[3]) * height
-        xmin = int( x - w/2 )
-        xmax = int( x + w/2 )
-        ymin = int( y - h/2 )
-        ymax = int( y + h/2 )
+        # The anchor is twice bigger than the original
+        xmin = int( x - w ) if int( x - w ) > 0 else 0
+        xmax = int( x + w ) if int( x + w ) < width else width
+        ymin = int( y - h ) if int( y - h ) > 0 else 0
+        ymax = int( y + h ) if int( y + h ) < height else height
         img = img[ymin:ymax, xmin:xmax ]
         return img
 
