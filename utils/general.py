@@ -35,6 +35,8 @@ import pkg_resources as pkg
 import torch
 import torchvision
 import yaml
+import ckwrap
+from scipy import stats
 
 from utils import TryExcept, emojis
 from utils.downloads import gsutil_getsize
@@ -1080,6 +1082,74 @@ def increment_path(path, exist_ok=False, sep='', mkdir=False):
         path.mkdir(parents=True, exist_ok=True)  # make directory
 
     return path
+
+# REVIEW: add Median Filter
+def MedianFilter( all_preds, device ):
+    keys = []
+    for i, preds in enumerate(all_preds):
+        count = np.repeat(0, len(preds) )
+        count_dict = dict(zip(preds, count))
+
+        for pred in preds:
+            angle_dict = dict(zip(preds, preds))      
+            
+            # Subtract a value from a list
+            for key,value in  angle_dict.items():
+                value = value - pred
+                if value > 180:
+                    value -= 360
+                elif value < -180:
+                    value += 360
+                angle_dict[key] = value
+                
+            # Sort the dict by value
+            angle_dict = { k: v for k, v in sorted(angle_dict.items(), key=lambda item: item[1]) }
+            
+            # Catch the middle key of the list
+            mid_key = list( angle_dict.keys() )[ int( ( len(preds) + 1 ) / 2 ) -1 ]
+            
+            # Update the count of the middle key
+            for key, value in  count_dict.items():
+                if key == mid_key:
+                    count_dict[key] += 1
+                    
+        # Sort the count_dict by value
+        count_dict = { k: v for k, v in sorted(count_dict.items(), key=lambda item: item[1], reverse=True) }
+        
+        '''print('pred:', list(count_dict.keys()) )
+        print('all: ', all_preds[i], i )
+        print( '-------------------------------')'''
+        all_preds[i] = torch.Tensor(list(count_dict.keys()))
+    
+    return all_preds
+
+def ZScoreFilter( all_preds, devices ):
+    
+    for i, preds in enumerate(all_preds):
+        
+        
+        # Use kmeans to get 2 groups and choose the bigger group
+        sorted_preds = sorted(preds)
+        km = ckwrap.ckmeans(sorted_preds,2)
+        buckets = [[],[]]
+        for j in range(len(sorted_preds)):
+            buckets[km.labels[j]].append(sorted_preds[j])
+        similarity = buckets[0] if len(buckets[0]) > len(buckets[1]) else buckets[1]
+        # Calculate zScore and get min value and replace it with top1
+        min_value = similarity[abs(stats.zscore(similarity)).argmin()]
+        top1 = np.where(preds == min_value)
+        
+        if preds[0] != preds[top1] :
+            print('pred:', min_value )
+            print('all: ', all_preds[i] )
+            print( '-------------------------------')
+        preds[0], preds[top1] = preds[top1], preds[0]
+        all_preds[i] = preds
+        
+        '''print('pred:', preds )
+        print('all: ', all_preds[i], i )
+        print( '-------------------------------')'''
+    return torch.Tensor(all_preds).to(devices)
 
 
 # OpenCV Chinese-friendly functions ------------------------------------------------------------------------------------

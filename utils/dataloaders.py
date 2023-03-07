@@ -1247,10 +1247,15 @@ class ClassificationDatasetFromTxt(Dataset):
         w = float(pos[2]) * width
         h = float(pos[3]) * height
         # The anchor is twice bigger than the original
-        xmin = int( x - w ) if int( x - w ) > 0 else 0
-        xmax = int( x + w ) if int( x + w ) < width else width
-        ymin = int( y - h ) if int( y - h ) > 0 else 0
-        ymax = int( y + h ) if int( y + h ) < height else height
+        '''xmin = int( x - w/2 - 5 ) if int( x - w/2 - 5 ) > 0 else 0
+        xmax = int( x + w/2 + 5 ) if int( x + w/2 + 5 ) < width else width
+        ymin = int( y - h/2 - 5 ) if int( y - h/2 - 5 ) > 0 else 0
+        ymax = int( y + h/2 + 5 ) if int( y + h/2 + 5 ) < height else height'''
+        
+        xmin = int( x - w/2  )
+        xmax = int( x + w/2  )
+        ymin = int( y - h/2  )
+        ymax = int( y + h/2  )
         img = img[ymin:ymax, xmin:xmax ]
         return img
 

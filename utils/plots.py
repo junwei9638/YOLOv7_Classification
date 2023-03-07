@@ -623,7 +623,7 @@ def Plot_Prob_Distribution( pred_prob, gt_label, path, epoch) :
         plt.title('gt: '+ str(label), fontsize=10)
         plt.subplots_adjust(wspace=0.5, hspace=0.5)
         plt.plot( label_range, pred, 'r-')
-    plt.savefig( path / ( 'prob_dis_epoch' + str(epoch) ) )
+    plt.savefig( os.path.join( path, ( 'prob_dis_epoch' + str(epoch) ) ) )
     plt.close()
 
 def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
@@ -634,5 +634,40 @@ def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
     plt.ylabel( 'Preds', fontsize=10 )
     plt.xlabel( 'Labels', fontsize=10 )
     plt.plot( targets, preds, 'r.')
-    plt.savefig( path / ( 'wrong_preds_epoch' + str(epoch) ) )
+    plt.savefig( os.path.join( path, ( 'wrong_preds_epoch' + str(epoch) ) ) )
     plt.close()
+    
+def Plot_Topk_Distribution( topk, target, path, epoch) :
+    for i in range(1, 5):
+        pred = topk[i][:].tolist()
+        label = np.repeat( target[i].cpu().numpy(), 15 )
+        topk_range = np.arange(0, topk.size()[1])
+        plt.subplot( 2, 2, i )
+        plt.ylabel('Angle', fontsize=10)
+        plt.xlabel('Topk', fontsize=10)
+        plt.title('gt: '+ str(label[0]), fontsize=10)
+        plt.subplots_adjust(wspace=0.5, hspace=0.5)
+        plt.plot( topk_range, label, 'b-')
+        plt.plot( topk_range, pred, 'r.')
+        
+        for i, p in enumerate(pred):
+            if ( label[0] == p ) :
+                plt.plot( i, p, 'yo')
+                plt.title('gt: '+ str(label[0])+', top:'+ str(i), fontsize=10)
+                break
+    plt.savefig( os.path.join( path, ( 'topk_dis_epoch' + str(epoch) ) ) )
+    plt.close()
+    
+def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
+    layer = ['24', '37', '51']
+    if not os.path.exists( save_dir / func_name ):
+        os.mkdir( os.path.join( save_dir, func_name ) )
+        for i in range(len(layer)) :
+            layer_dir = os.path.join( save_dir, func_name, layer[i] )
+            os.mkdir( layer_dir )
+            if func_name == 'prob_dis':
+                Plot_Prob_Distribution( preds[:, (i)*360:(i+1)*360 ], targets, layer_dir, epoch )
+            elif func_name == 'wrong_dis':
+                Plot_Wrong_Sample_Distribution( preds[i], layer_dir, epoch )
+            elif func_name == 'topk_dis':
+                Plot_Topk_Distribution( preds[i], targets, layer_dir, epoch )

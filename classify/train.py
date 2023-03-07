@@ -51,7 +51,7 @@ import pandas as pd
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
                            download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset, check_file, get_latest_run)
 from utils.loggers import GenericLogger
-from utils.plots import imshow_cls, WriteReport, Plot_Prob_Distribution, Plot_Wrong_Sample_Distribution
+from utils.plots import imshow_cls, WriteReport, Plot_What_U_Want
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
                                smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
 
@@ -175,10 +175,12 @@ def train(opt, device):
         elif opt.model in torchvision.models.__dict__:  # TorchVision models i.e. resnet50, efficientnet_b0
             model = torchvision.models.__dict__[opt.model](weights='IMAGENET1K_V1' if pretrained else None)
 
+        # TODO: fix bugs
         elif opt.resume:
             weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
             model = torch.load( weights )
         
+        # Resume: change the way of loading model
         elif opt.cfg is not None : 
             LOGGER.info( "Loading Model from yaml................" ) 
             check_yaml(opt.cfg)
@@ -269,6 +271,7 @@ def train(opt, device):
     for epoch in range(epochs):  # loop over the dataset multiple times
 
         tloss, vloss, fitness = 0.0, 0.0, 0.0  # train loss, val loss, fitness
+        tloss24, tloss37, tloss51 = 0.0, 0.0, 0.0
         model.train()
         if RANK != -1:
             trainloader.sampler.set_epoch(epoch)
@@ -282,7 +285,15 @@ def train(opt, device):
             with amp.autocast(enabled=cuda):  # stability issues when enabled
                 
                 preds = model( images )
-                loss = criterion( preds, labels )
+                preds_layer24 = preds[:, :360]
+                preds_layer37 = preds[:, 360:720]
+                preds_layer51 = preds[:, 720:]
+
+                loss24 = criterion( preds_layer24, labels )
+                loss37 = criterion( preds_layer37, labels )
+                loss51 = criterion( preds_layer51, labels )
+                loss = loss24 + loss37 + loss51
+                #loss = criterion( preds, labels )
             
             # Backward
             scaler.scale(loss).backward()
@@ -299,42 +310,34 @@ def train(opt, device):
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
+                tloss24 = (tloss24 * i + loss24.item()) / (i + 1)  # update mean losses
+                tloss37 = (tloss37 * i + loss37.item()) / (i + 1)  # update mean losses
+                tloss51 = (tloss51 * i + loss51.item()) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 pbar.desc = f"{f'{epoch + 1}/{epochs}':>10}{mem:>10}{tloss:>12.3g}" + ' ' * 36
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss, wrong_preds = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds, targets, topk = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
-                    fitness = top1  # define fitness as top1 accuracy
+                    # fitness = top1  # define fitness as top1 accuracy
+                    fitness = top1[-1]  # define fitness as top1 accuracy
 
 
         # Scheduler
         scheduler.step()
         
 
-
-        # REVIEW: add value distribution after val
+        # REVIEW: plot distribution after val
         val_batch_images, val_batch_labels = next(iter(valloader))
-        
-        if not os.path.exists( save_dir / 'prob_dis' ):
-            prob_save_dir = save_dir / 'prob_dis'
-            os.mkdir( prob_save_dir )
-
-        # REVIEW: plot value distribution
         val_batch_pred = ema.ema(val_batch_images.to(device))
-        Plot_Prob_Distribution( val_batch_pred, val_batch_labels, prob_save_dir, epoch )
         
-        # REVIEW: add Wrong value distribution after val
-        if not os.path.exists( save_dir / 'wrong_dis' ):
-            wrong_preds_save_dir = save_dir / 'wrong_dis'
-            os.mkdir( wrong_preds_save_dir )
-        Plot_Wrong_Sample_Distribution( wrong_preds, wrong_preds_save_dir, epoch )
-
-
+        Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
+        Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
+        Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
         # Log metrics
         if RANK in {-1, 0}:
             # Best fitness
@@ -342,12 +345,24 @@ def train(opt, device):
                 best_fitness = fitness
 
             # Log
+            # REVIEW: top15
             metrics = {
                 "train/loss": tloss,
-                f"{val}/loss": vloss,
-                "metrics/accuracy_top1": top1,
-                "metrics/accuracy_top5": top5,
+                "train/loss24": tloss24,
+                "train/loss37": tloss37,
+                "train/loss51": tloss51,
+                f"{val}/loss": vloss[0],
+                f"{val}/loss24": vloss[1],
+                f"{val}/loss37": vloss[2],
+                f"{val}/loss51": vloss[3],
+                "metrics_24/accuracy_top1": top1[0],
+                "metrics_24/accuracy_top15": top5[0],
+                "metrics_37/accuracy_top1": top1[1],
+                "metrics_37/accuracy_top15": top5[1],
+                "metrics_51/accuracy_top1": top1[2],
+                "metrics_51/accuracy_top15": top5[2],
                 "lr/0": optimizer.param_groups[0]['lr']}  # learning rate
+            
             logger.log_metrics(metrics, epoch)
 
             # Save model
@@ -369,7 +384,8 @@ def train(opt, device):
                     torch.save(ckpt, best)
 
                     #REVIEW: write best result while validation
-                    val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
+                    val_pred = ema.ema(val_batch_images.to(device))
+                    val_pred = torch.max( val_pred[:, 720:] , 1)[1]
                     file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
                     WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
@@ -387,7 +403,8 @@ def train(opt, device):
         # Plot examples
         # REVIEW: add cls_names to solve the problem that nn.DataParallel has no attribute of name
         val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
-        val_pred = torch.max(ema.ema(val_batch_images.to(device)), 1)[1]
+        val_pred = ema.ema(val_batch_images.to(device))
+        val_pred = torch.max( val_pred[:, 720:] , 1)[1]
         file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
 
         # Log results
@@ -398,7 +415,8 @@ def train(opt, device):
     # REVIEW: Test best model
     best_model = torch.hub.load( '.', 'custom', path=best, source='local' )
     test_batch_images, test_batch_labels = next(iter(testloader))
-    test_pred = torch.max( best_model(test_batch_images.to(device) ), 1)[1]
+    test_pred = best_model(test_batch_images.to(device))
+    test_pred = torch.max( test_pred[:, 720:] , 1)[1]
     file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
     
     # REVIEW: Write Report
