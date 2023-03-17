@@ -285,15 +285,16 @@ def train(opt, device):
             with amp.autocast(enabled=cuda):  # stability issues when enabled
                 
                 preds = model( images )
-                preds_layer24 = preds[:, :360]
-                preds_layer37 = preds[:, 360:720]
-                preds_layer51 = preds[:, 720:]
+                #REVIEW: 3 layer
+                # preds_layer24 = preds[:, :360]
+                # preds_layer37 = preds[:, 360:720]
+                # preds_layer51 = preds[:, 720:]
 
-                loss24 = criterion( preds_layer24, labels )
-                loss37 = criterion( preds_layer37, labels )
-                loss51 = criterion( preds_layer51, labels )
-                loss = loss24 + loss37 + loss51
-                #loss = criterion( preds, labels )
+                # loss24 = criterion( preds_layer24, labels )
+                # loss37 = criterion( preds_layer37, labels )
+                # loss51 = criterion( preds_layer51, labels )
+                # loss = loss24 + loss37 + loss51
+                loss = criterion( preds, labels )
             
             # Backward
             scaler.scale(loss).backward()
@@ -310,9 +311,10 @@ def train(opt, device):
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
-                tloss24 = (tloss24 * i + loss24.item()) / (i + 1)  # update mean losses
-                tloss37 = (tloss37 * i + loss37.item()) / (i + 1)  # update mean losses
-                tloss51 = (tloss51 * i + loss51.item()) / (i + 1)  # update mean losses
+                #REVIEW: 3 layer
+                # tloss24 = (tloss24 * i + loss24.item()) / (i + 1)  # update mean losses
+                # tloss37 = (tloss37 * i + loss37.item()) / (i + 1)  # update mean losses
+                # tloss51 = (tloss51 * i + loss51.item()) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 pbar.desc = f"{f'{epoch + 1}/{epochs}':>10}{mem:>10}{tloss:>12.3g}" + ' ' * 36
 
@@ -323,8 +325,9 @@ def train(opt, device):
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
-                    # fitness = top1  # define fitness as top1 accuracy
-                    fitness = top1[-1]  # define fitness as top1 accuracy
+                    fitness = top1  # define fitness as top1 accuracy
+                    #REVIEW: 3 layer
+                    # fitness = top1[-1]  # define fitness as top1 accuracy
 
 
         # Scheduler
@@ -348,19 +351,22 @@ def train(opt, device):
             # REVIEW: top15
             metrics = {
                 "train/loss": tloss,
-                "train/loss24": tloss24,
-                "train/loss37": tloss37,
-                "train/loss51": tloss51,
-                f"{val}/loss": vloss[0],
-                f"{val}/loss24": vloss[1],
-                f"{val}/loss37": vloss[2],
-                f"{val}/loss51": vloss[3],
-                "metrics_24/accuracy_top1": top1[0],
-                "metrics_24/accuracy_top15": top5[0],
-                "metrics_37/accuracy_top1": top1[1],
-                "metrics_37/accuracy_top15": top5[1],
-                "metrics_51/accuracy_top1": top1[2],
-                "metrics_51/accuracy_top15": top5[2],
+                f"{val}/loss": vloss,
+                "metrics/accuracy_top1": top1,
+                "metrics/accuracy_top15": top5,
+                #REVIEW: 3 layer
+                # "train/loss24": tloss24,
+                # "train/loss37": tloss37,
+                # "train/loss51": tloss51,
+                # f"{val}/loss24": vloss[1],
+                # f"{val}/loss37": vloss[2],
+                # f"{val}/loss51": vloss[3],
+                # "metrics_24/accuracy_top1": top1[0],
+                # "metrics_24/accuracy_top15": top5[0],
+                # "metrics_37/accuracy_top1": top1[1],
+                # "metrics_37/accuracy_top15": top5[1],
+                # "metrics_51/accuracy_top1": top1[2],
+                # "metrics_51/accuracy_top15": top5[2],
                 "lr/0": optimizer.param_groups[0]['lr']}  # learning rate
             
             logger.log_metrics(metrics, epoch)
@@ -377,15 +383,17 @@ def train(opt, device):
                     'optimizer': None,  # optimizer.state_dict(),
                     'opt': vars(opt),
                     'date': datetime.now().isoformat()}
-
                 # Save last, best and delete
                 torch.save(ckpt, last)
+
                 if best_fitness == fitness:
                     torch.save(ckpt, best)
 
                     #REVIEW: write best result while validation
                     val_pred = ema.ema(val_batch_images.to(device))
-                    val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+                    #REVIEW: 3 layer
+                    # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+                    val_pred = torch.max( val_pred , 1)[1]
                     file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
                     WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
@@ -404,7 +412,9 @@ def train(opt, device):
         # REVIEW: add cls_names to solve the problem that nn.DataParallel has no attribute of name
         val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
         val_pred = ema.ema(val_batch_images.to(device))
-        val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+        #REVIEW: 3 layer
+        # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+        val_pred = torch.max( val_pred , 1)[1]
         file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
 
         # Log results
@@ -416,7 +426,9 @@ def train(opt, device):
     best_model = torch.hub.load( '.', 'custom', path=best, source='local' )
     test_batch_images, test_batch_labels = next(iter(testloader))
     test_pred = best_model(test_batch_images.to(device))
-    test_pred = torch.max( test_pred[:, 720:] , 1)[1]
+    #REVIEW: 3 layer
+    # val_pred = torch.max( test_pred[:, 720:] , 1)[1]
+    test_pred = torch.max( test_pred , 1)[1]
     file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
     
     # REVIEW: Write Report

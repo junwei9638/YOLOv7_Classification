@@ -1120,7 +1120,23 @@ def MedianFilter( all_preds, device ):
         print('all: ', all_preds[i], i )
         print( '-------------------------------')'''
         all_preds[i] = torch.Tensor(list(count_dict.keys()))
-    
+    return all_preds
+
+
+def MedianFilter120( all_preds ):
+    pred_list = []
+    for i, preds in enumerate(all_preds):
+        for j, pred in enumerate( preds ):
+            pred_list.append( pred.repeat( 15 - j ) )
+        pred_list = torch.cat( pred_list )
+        
+        mid_element = pred_list[ int(len(pred_list) / 2 )- 1 ]
+        
+        top1 = np.where( preds.cpu().numpy() == mid_element.cpu().numpy() )
+        preds[0], preds[top1] = preds[top1].clone(), preds[0].clone()
+        all_preds[i] = preds
+        
+        pred_list = []
     return all_preds
 
 def ZScoreFilter( all_preds, devices ):

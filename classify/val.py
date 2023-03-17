@@ -27,7 +27,7 @@ from pathlib import Path
 
 import torch
 from tqdm import tqdm
-from utils.general import MedianFilter, ZScoreFilter
+from utils.general import MedianFilter, ZScoreFilter, MedianFilter120
 
 
 FILE = Path(__file__).resolve()
@@ -41,15 +41,16 @@ from utils.dataloaders import create_classification_dataloader
 from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args
 from utils.torch_utils import select_device, smart_inference_mode
 
-def CalculateTopk_and_GetWrongSample( pred, targets):
+def CalculateTopk_and_GetWrongSample( pred, targets, post_process=False):
     wrong_preds = []
     
     # REVIEW: get the wrong pred samples
     for i, target in enumerate(targets):
         if pred[i][0] != target :
             wrong_preds.append( [pred[i][0], target])
-
-    # pred = MedianFilter( pred, device )
+    
+    if post_process:
+        pred = MedianFilter120( pred )
     # pred = ZScoreFilter( pred.cpu().numpy(), device )
 
     # REVIEW: see +-180 preds as pos preds
@@ -120,7 +121,7 @@ def run(
                                                       workers=workers)
 
     model.eval()
-    pred24, pred37, pred51, targets, loss, dt = [], [], [], [], 0, (Profile(), Profile(), Profile())
+    pred, pred24, pred37, pred51, targets, loss, dt = [], [], [], [], [], 0, (Profile(), Profile(), Profile())
     loss24, loss37, loss51 = 0, 0, 0
     n = len(dataloader)  # number of batches
     # REVIEW: make action directly
@@ -135,43 +136,51 @@ def run(
 
             with dt[1]:
                 y = model( images ) 
-                y24 = y[:, :360]
-                y37 = y[:, 360:720]
-                y51 = y[:, 720:]
+                #REVIEW: 3 layer
+                # y24 = y[:, :360]
+                # y37 = y[:, 360:720]
+                # y51 = y[:, 720:]
             with dt[2]:
                 
                 # REVIEW: top15
-                pred24.append(y24.argsort(1, descending=True)[:, :15])
-                pred37.append(y37.argsort(1, descending=True)[:, :15])
-                pred51.append(y51.argsort(1, descending=True)[:, :15])
-                # pred.append(y.argsort(1, descending=True)[:, :5])
+                # pred24.append(y24.argsort(1, descending=True)[:, :15])
+                # pred37.append(y37.argsort(1, descending=True)[:, :15])
+                # pred51.append(y51.argsort(1, descending=True)[:, :15])
+                pred.append(y.argsort(1, descending=True)[:, :15])
                 targets.append(labels)
                 
                 if criterion:
-                    #loss += criterion(y, labels)
-                    loss24 += criterion(y24, labels)
-                    loss37 += criterion(y37, labels)
-                    loss51 += criterion(y51, labels)
-                    loss = loss24 + loss37 + loss51
+                    loss += criterion(y, labels)
+                    # loss24 += criterion(y24, labels)
+                    # loss37 += criterion(y37, labels)
+                    # loss51 += criterion(y51, labels)
+                    # loss = loss24 + loss37 + loss51
 
-    pred24, pred37, pred51, targets = torch.cat(pred24), torch.cat(pred37), torch.cat(pred51), torch.cat(targets)
-    result24 = CalculateTopk_and_GetWrongSample( pred24, targets)
-    result37 = CalculateTopk_and_GetWrongSample( pred37, targets)
-    result51 = CalculateTopk_and_GetWrongSample( pred51, targets)
-    top1 = [result24[0], result37[0], result51[0]]
-    top5 = [result24[1], result37[1], result51[1]]
-    wrong_preds = [result24[2], result37[2], result51[2]]
+    # pred24, pred37, pred51, targets = torch.cat(pred24), torch.cat(pred37), torch.cat(pred51), torch.cat(targets)
+    # result24 = CalculateTopk_and_GetWrongSample( pred24, targets )
+    # result37 = CalculateTopk_and_GetWrongSample( pred37, targets )
+    # result51 = CalculateTopk_and_GetWrongSample( pred51, targets )
+    # top1 = [result24[0], result37[0], result51[0]]
+    # top5 = [result24[1], result37[1], result51[1]]
+    # wrong_preds = [result24[2], result37[2], result51[2]]
     
+    pred, targets =  torch.cat(pred), torch.cat(targets)
+    top1, top5, wrong_preds = CalculateTopk_and_GetWrongSample( pred, targets )
     loss /= n
-    loss24 /= n
-    loss37 /= n
-    loss51 /= n
+    #REVIEW: 3 layer
+    # loss24 /= n
+    # loss37 /= n
+    # loss51 /= n
 
     if pbar:
-        pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1[-1]:>12.3g}{top5[-1]:>12.3g}"
+        #REVIEW: 3 layer
+        # pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1[-1]:>12.3g}{top5[-1]:>12.3g}"
+        pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1:>12.3g}{top5:>12.3g}"
     if verbose:  # all classes
         LOGGER.info(f"{'Class':>24}{'Images':>12}{'top1_acc':>12}{'top5_acc':>12}")
-        LOGGER.info(f"{'all':>24}{targets.shape[0]:>12}{top1[-1]:>12.3g}{top5[-1]:>12.3g}")
+        #REVIEW: 3 layer
+        # LOGGER.info(f"{'all':>24}{targets.shape[0]:>12}{top1[-1]:>12.3g}{top5[-1]:>12.3g}")
+        LOGGER.info(f"{'all':>24}{targets.shape[0]:>12}{top1:>12.3g}{top5:>12.3g}")
         for i, c in model.names.items():
             aci = acc[targets == i]
             top1i, top5i = aci.mean(0).tolist()
@@ -182,7 +191,9 @@ def run(
         shape = (1, 3, imgsz, imgsz)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms post-process per image at shape {shape}' % t)
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
-    return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
+    #REVIEW: 3 layer
+    # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
+    return top1, top5, loss, wrong_preds, targets, pred
 
 
 def parse_opt():
