@@ -193,7 +193,7 @@ def train(opt, device):
             LOGGER.warning("WARNING ⚠️ pass YOLOv5 classifier model with '-cls' suffix, i.e. '--model yolov5s-cls.pt'")
             model = ClassificationModel(model=model, nc=nc, cutoff=opt.cutoff or 10)  # convert to classification model'''
 
-        reshape_classifier_output(model, nc)  # update class count
+        # reshape_classifier_output(model, nc)  # update class count
 
     for m in model.modules():
         if not pretrained and hasattr(m, 'reset_parameters'):
@@ -285,18 +285,21 @@ def train(opt, device):
             with amp.autocast(enabled=cuda):  # stability issues when enabled
                 
                 preds = model( images )
-                #REVIEW: 3 layer
-                # preds_layer24 = preds[:, :360]
-                # preds_layer37 = preds[:, 360:720]
-                # preds_layer51 = preds[:, 720:]
-
+                # REVIEW: 3 layer
+                preds_layer24 = preds[:, :360]
+                preds_layer37 = preds[:, 360:720]
+                preds_layer51 = preds[:, 720:]
+                preds_mean = ( preds_layer24 + preds_layer37 + preds_layer51 ) / 3
                 # loss24 = criterion( preds_layer24, labels )
                 # loss37 = criterion( preds_layer37, labels )
                 # loss51 = criterion( preds_layer51, labels )
                 # loss = loss24 + loss37 + loss51
-                loss = criterion( preds, labels )
+                # loss = criterion( preds, labels )
+                loss = criterion( preds_mean, labels )
             
             # Backward
+            # REVIEW: nn.adaptivePool needs this
+            # torch.use_deterministic_algorithms(False)
             scaler.scale(loss).backward()
 
             # Optimize
@@ -311,7 +314,7 @@ def train(opt, device):
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
-                #REVIEW: 3 layer
+                # REVIEW: 3 layer
                 # tloss24 = (tloss24 * i + loss24.item()) / (i + 1)  # update mean losses
                 # tloss37 = (tloss37 * i + loss37.item()) / (i + 1)  # update mean losses
                 # tloss51 = (tloss51 * i + loss51.item()) / (i + 1)  # update mean losses
@@ -325,8 +328,9 @@ def train(opt, device):
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc)  # test accuracy, loss
+                    
+                    # REVIEW: 3 layer
                     fitness = top1  # define fitness as top1 accuracy
-                    #REVIEW: 3 layer
                     # fitness = top1[-1]  # define fitness as top1 accuracy
 
 
@@ -337,7 +341,8 @@ def train(opt, device):
         # REVIEW: plot distribution after val
         val_batch_images, val_batch_labels = next(iter(valloader))
         val_batch_pred = ema.ema(val_batch_images.to(device))
-        
+        # REVIEW: 3 layer
+        val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
         Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
         Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
         Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
@@ -350,11 +355,11 @@ def train(opt, device):
             # Log
             # REVIEW: top15
             metrics = {
+                #REVIEW: 3 layer
                 "train/loss": tloss,
                 f"{val}/loss": vloss,
                 "metrics/accuracy_top1": top1,
                 "metrics/accuracy_top15": top5,
-                #REVIEW: 3 layer
                 # "train/loss24": tloss24,
                 # "train/loss37": tloss37,
                 # "train/loss51": tloss51,
@@ -389,13 +394,13 @@ def train(opt, device):
                 if best_fitness == fitness:
                     torch.save(ckpt, best)
 
-                    #REVIEW: write best result while validation
-                    val_pred = ema.ema(val_batch_images.to(device))
-                    #REVIEW: 3 layer
-                    # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
-                    val_pred = torch.max( val_pred , 1)[1]
-                    file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
-                    WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
+                    # # REVIEW: write best result while validation
+                    # val_pred = ema.ema(val_batch_images.to(device))
+                    # # REVIEW: 3 layer
+                    # # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+                    # val_pred = torch.max( val_pred , 1)[1]
+                    # file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'best_val_images.jpg')
+                    # WriteReport( val_batch_labels, val_pred, save_dir, valloader.dataset.classes, 'best_val' )
                 del ckpt
 
     # Train complete
@@ -408,31 +413,31 @@ def train(opt, device):
                     f"\nPyTorch Hub:     model = torch.hub.load('ultralytics/yolov5', 'custom', '{best}')"
                     f"\nVisualize:       https://netron.app\n")
 
-        # Plot examples
-        # REVIEW: add cls_names to solve the problem that nn.DataParallel has no attribute of name
-        val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
-        val_pred = ema.ema(val_batch_images.to(device))
-        #REVIEW: 3 layer
-        # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
-        val_pred = torch.max( val_pred , 1)[1]
-        file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
+        # # Plot final epoch examples
+        # # REVIEW: add cls_names to solve the problem that nn.DataParallel has no attribute of name
+        # val_batch_images, val_batch_labels = (x[:25] for x in next(iter(valloader)))  # first 25 images and labels
+        # val_pred = ema.ema(val_batch_images.to(device))
+        # # REVIEW: 3 layer
+        # # val_pred = torch.max( val_pred[:, 720:] , 1)[1]
+        # val_pred = torch.max( val_pred , 1)[1]
+        # file = imshow_cls(val_batch_images[:25], val_batch_labels[:25], pred = val_pred[:25], test_cls=valloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'last_val_images.jpg')
 
         # Log results
         meta = {"epochs": epochs, "top1_acc": best_fitness, "date": datetime.now().isoformat()}
         logger.log_images(file, name='Test Examples (true-predicted)', epoch=epoch)
         logger.log_model(best, epochs, metadata=meta)
 
-    # REVIEW: Test best model
-    best_model = torch.hub.load( '.', 'custom', path=best, source='local' )
-    test_batch_images, test_batch_labels = next(iter(testloader))
-    test_pred = best_model(test_batch_images.to(device))
-    #REVIEW: 3 layer
-    # val_pred = torch.max( test_pred[:, 720:] , 1)[1]
-    test_pred = torch.max( test_pred , 1)[1]
-    file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
+    # # REVIEW: Test best model
+    # best_model = torch.hub.load( '.', 'custom', path=best, source='local' )
+    # test_batch_images, test_batch_labels = next(iter(testloader))
+    # test_pred = best_model(test_batch_images.to(device))
+    # # REVIEW: 3 layer
+    # # test_pred = torch.max( test_pred[:, 720:] , 1)[1]
+    # test_pred = torch.max( test_pred , 1)[1]
+    # file = imshow_cls(test_batch_images[:25], test_batch_labels[:25], pred = test_pred[:25], test_cls=testloader.dataset.classes, names=trainloader.dataset.classes, f=save_dir / 'test_images.jpg')
     
-    # REVIEW: Write Report
-    WriteReport( test_batch_labels, test_pred, save_dir, testloader.dataset.classes, 'test' )
+    # # REVIEW: Write Report
+    # WriteReport( test_batch_labels, test_pred, save_dir, testloader.dataset.classes, 'test' )
 
 
 

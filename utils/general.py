@@ -1085,28 +1085,36 @@ def increment_path(path, exist_ok=False, sep='', mkdir=False):
 
 # REVIEW: add Median Filter
 def MedianFilter( all_preds, device ):
-    keys = []
     for i, preds in enumerate(all_preds):
         count = np.repeat(0, len(preds) )
         count_dict = dict(zip(preds, count))
 
         for pred in preds:
             angle_dict = dict(zip(preds, preds))      
-            
+            list120= []
             # Subtract a value from a list
-            for key,value in  angle_dict.items():
+            for j, (key,value) in  enumerate(angle_dict.items()):
                 value = value - pred
                 if value > 180:
                     value -= 360
                 elif value < -180:
                     value += 360
                 angle_dict[key] = value
-                
+                for r in range(15-j) :
+                    list120.append(value)
+                     
+            mid_key = list(angle_dict.keys())[list(angle_dict.values()).index( list120[ int(len(list120) / 2 )- 1 ] )]
+            # print( "-------------------------" )
+            # print( list(angle_dict.keys()) )
+            # print( list(angle_dict.values()).index( list120[ int(len(list120) / 2 )- 1 ] ) )
+            # print( list120[ int(len(list120) / 2 )- 1 ] )
+            # print( mid_key )
+            # print( "-------------------------" )
             # Sort the dict by value
-            angle_dict = { k: v for k, v in sorted(angle_dict.items(), key=lambda item: item[1]) }
+            # angle_dict = { k: v for k, v in sorted(angle_dict.items(), key=lambda item: item[1]) }
             
             # Catch the middle key of the list
-            mid_key = list( angle_dict.keys() )[ int( ( len(preds) + 1 ) / 2 ) -1 ]
+            # mid_key = list( angle_dict.keys() )[ int( ( len(preds) + 1 ) / 2 ) -1 ]
             
             # Update the count of the middle key
             for key, value in  count_dict.items():

@@ -1061,18 +1061,21 @@ class Classify(nn.Module):
         super().__init__()
         c_ = c1  # efficientnet_b0 size
         self.conv = Conv(c1, c_, k, s, autopad(k, p), g)
+        # self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,1)
         self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,1)
         self.drop = nn.Dropout(p=0.0, inplace=True)
-        self.linear = nn.Linear(c_, c2)  # to x(b,c2)
-        # self.linear2 = nn.Linear(c2, c2)  # to x(b,c2)
+        self.linear = nn.Linear(c_,  c2)  # to x(b,c2)
         # REVIEW: add sigmoid behind linear layer
-        # self.sigmoid = nn.Sigmoid()
+        self.sigmoid = nn.Sigmoid()
     def forward(self, x):
         if isinstance(x, list):
-            x = torch.cat(x, 1)
+            x = torch.cat(x, 1) 
+        x = self.pool( self.conv(x) ).flatten(1)
+        x = self.linear( self.drop( x ) )
+        x = self.sigmoid( x )
+        return x 
         
-        #return self.linear2( self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) ) )
-        return self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) )
+        # return self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) )
         # return torch.exp(self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) ))
 
 

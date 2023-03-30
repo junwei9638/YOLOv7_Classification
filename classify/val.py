@@ -41,7 +41,7 @@ from utils.dataloaders import create_classification_dataloader
 from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args
 from utils.torch_utils import select_device, smart_inference_mode
 
-def CalculateTopk_and_GetWrongSample( pred, targets, post_process=False):
+def CalculateTopk_and_GetWrongSample( pred, targets, post_process=False, device=None):
     wrong_preds = []
     
     # REVIEW: get the wrong pred samples
@@ -50,7 +50,7 @@ def CalculateTopk_and_GetWrongSample( pred, targets, post_process=False):
             wrong_preds.append( [pred[i][0], target])
     
     if post_process:
-        pred = MedianFilter120( pred )
+        pred = MedianFilter( pred, device )
     # pred = ZScoreFilter( pred.cpu().numpy(), device )
 
     # REVIEW: see +-180 preds as pos preds
@@ -135,17 +135,18 @@ def run(
                 images, labels = images.to(device, non_blocking=True), labels.to(device)
 
             with dt[1]:
-                y = model( images ) 
                 #REVIEW: 3 layer
-                # y24 = y[:, :360]
-                # y37 = y[:, 360:720]
-                # y51 = y[:, 720:]
+                y = model( images ) 
+                y24 = y[:, :360]
+                y37 = y[:, 360:720]
+                y51 = y[:, 720:]
             with dt[2]:
                 
                 # REVIEW: top15
                 # pred24.append(y24.argsort(1, descending=True)[:, :15])
                 # pred37.append(y37.argsort(1, descending=True)[:, :15])
                 # pred51.append(y51.argsort(1, descending=True)[:, :15])
+                y = ( y24 + y37 + y51 ) / 3 
                 pred.append(y.argsort(1, descending=True)[:, :15])
                 targets.append(labels)
                 
@@ -165,7 +166,7 @@ def run(
     # wrong_preds = [result24[2], result37[2], result51[2]]
     
     pred, targets =  torch.cat(pred), torch.cat(targets)
-    top1, top5, wrong_preds = CalculateTopk_and_GetWrongSample( pred, targets )
+    top1, top5, wrong_preds = CalculateTopk_and_GetWrongSample( pred, targets)
     loss /= n
     #REVIEW: 3 layer
     # loss24 /= n
