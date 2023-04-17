@@ -25,6 +25,7 @@ from utils.general import (CONFIG_DIR, FONT, LOGGER, check_font, check_requireme
 from utils.metrics import fitness
 from utils.segment.general import scale_image
 from sklearn import metrics as ms
+from collections import Counter
 
 # Settings
 RANK = int(os.getenv('RANK', -1))
@@ -658,20 +659,59 @@ def Plot_Topk_Distribution( topk, target, path, epoch) :
     plt.savefig( os.path.join( path, ( 'topk_dis_epoch' + str(epoch) ) ) )
     plt.close()
     
+def Plot_Angle_Bias_Distribution( preds, path, epoch ) :
+    preds = [int(pred.cpu().numpy()) for pred in preds] 
+    counted_list = Counter(preds)
+    elements = []
+    counts = []
+    for elem, count in counted_list.items():
+        elements.append(elem)
+        counts.append(count)
+    
+    plt.title('Angle Bias Distribution', fontsize=20)
+    plt.ylabel( 'Times', fontsize=10 )
+    plt.xlabel( 'Bias', fontsize=10 )
+    plt.bar(elements,counts)
+    plt.savefig( os.path.join( path, ( 'angle_bias_epoch' + str(epoch) ) ) )
+    plt.close()
+    
+def Plot_Gt_Location( preds, path, epoch ) :
+    preds = [int(pred.cpu().numpy()) for pred in preds] 
+    counted_list = Counter(preds)
+    elements = []
+    counts = []
+    for elem, count in counted_list.items():
+        elements.append(elem)
+        counts.append(count)
+    
+    plt.title('GT Location', fontsize=20)
+    plt.ylabel( 'Times', fontsize=10 )
+    plt.xlabel( 'TopK ', fontsize=10 )
+    plt.bar(elements,counts)
+    plt.savefig( os.path.join( path, ( 'angle_bias_epoch' + str(epoch) ) ) )
+    plt.close()
+    
 #REVIEW: 3 layer
 def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
     layer = ['51']
-    if not os.path.exists( save_dir / func_name ):
-        os.mkdir( os.path.join( save_dir, func_name ) )
-        for i in range(len(layer)) :
-            layer_dir = os.path.join( save_dir, func_name, layer[i] )
-            os.mkdir( layer_dir )
-            if func_name == 'prob_dis':
-                # Plot_Prob_Distribution( preds[:, (i)*360:(i+1)*360 ], targets, layer_dir, epoch )
-                Plot_Prob_Distribution( preds, targets, layer_dir, epoch )
-            elif func_name == 'wrong_dis':
-                # Plot_Wrong_Sample_Distribution( preds[i], layer_dir, epoch )
-                Plot_Wrong_Sample_Distribution( preds, layer_dir, epoch )
-            elif func_name == 'topk_dis':
-                # Plot_Topk_Distribution( preds[i], targets, layer_dir, epoch )
-                Plot_Topk_Distribution( preds, targets, layer_dir, epoch )
+    save_func_dir = os.path.join( save_dir, func_name )
+    if not os.path.exists( save_func_dir ):
+        # REVIEW: 3layer
+        # os.mkdir( os.path.join( save_dir, func_name ) )
+        # for i in range(len(layer)) :
+        #     save_func_dir = os.path.join( save_dir, func_name, layer[i] )
+        os.mkdir( save_func_dir )
+    
+    if func_name == 'prob_dis':
+        # Plot_Prob_Distribution( preds[:, (i)*360:(i+1)*360 ], targets, layer_dir, epoch )
+        Plot_Prob_Distribution( preds, targets, save_func_dir, epoch )
+    elif func_name == 'wrong_dis':
+        # Plot_Wrong_Sample_Distribution( preds[i], layer_dir, epoch )
+        Plot_Wrong_Sample_Distribution( preds, save_func_dir, epoch )
+    elif func_name == 'topk_dis':
+        # Plot_Topk_Distribution( preds[i], targets, layer_dir, epoch )
+        Plot_Topk_Distribution( preds, targets, save_func_dir, epoch )
+    elif func_name == 'ang_bias_dis':
+        Plot_Angle_Bias_Distribution( preds, save_func_dir, epoch )
+    elif func_name == 'gt_loc':
+        Plot_Gt_Location( preds, save_func_dir, epoch )

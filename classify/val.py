@@ -41,28 +41,34 @@ from utils.dataloaders import create_classification_dataloader
 from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args
 from utils.torch_utils import select_device, smart_inference_mode
 
-def CalculateTopk_and_GetWrongSample( pred, targets, post_process=False, device=None):
+def CalculateTopk_and_GetWrongSample( pred, targets, threshold, post_process=False, device=None):
     wrong_preds = []
+    bias_preds = []
+    gt_loc = []
     
-    # REVIEW: get the wrong pred samples
+    # REVIEW: get the wrong pred samples and bias_pred
     for i, target in enumerate(targets):
         if pred[i][0] != target :
-            wrong_preds.append( [pred[i][0], target])
+            wrong_preds.append( [pred[i][0].clone(), target])
+        bias_preds.append( ( pred[i][0] - target ) )
+        
+    #REVIEW: get bias of top15 and location of top1
+        pred[i] = abs(pred[i] - target)
+        
+        if torch.any( pred[i] <= threshold ):
+            gt_loc.append( torch.where( pred[i] <= threshold )[0][0] )
+    
     
     if post_process:
         pred = MedianFilter( pred, device )
     # pred = ZScoreFilter( pred.cpu().numpy(), device )
 
-    # REVIEW: see +-180 preds as pos preds
-    '''original_angle = ( targets[:, None] == pred ).float()
-    plus_angle = ( targets[:, None]+180 == pred ).float()
-    minus_angle = ( targets[:, None]-180 == pred ).float()
-    correct = original_angle+plus_angle + minus_angle'''
-
-    correct = (targets[:, None] == pred).float()
+    # REVIEW: add threshhold of angle
+    correct = torch.where( pred <= threshold, torch.tensor(1), torch.tensor(0) ).float()
+    # correct = (targets[:, None] == pred).float()
     acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
     top1, top5 = acc.mean(0).tolist()
-    return [top1, top5, wrong_preds]
+    return top1, top5, wrong_preds, bias_preds, gt_loc
 
 @smart_inference_mode()
 def run(
@@ -83,6 +89,8 @@ def run(
     criterion=None,
     pbar=None,
     nc=None,
+    angle_threshold=5,
+    loss_interval=5
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -137,21 +145,21 @@ def run(
             with dt[1]:
                 #REVIEW: 3 layer
                 y = model( images ) 
-                y24 = y[:, :360]
-                y37 = y[:, 360:720]
-                y51 = y[:, 720:]
+                # y24 = y[:, :360]
+                # y37 = y[:, 360:720]
+                # y51 = y[:, 720:]
             with dt[2]:
                 
                 # REVIEW: top15
                 # pred24.append(y24.argsort(1, descending=True)[:, :15])
                 # pred37.append(y37.argsort(1, descending=True)[:, :15])
                 # pred51.append(y51.argsort(1, descending=True)[:, :15])
-                y = ( y24 + y37 + y51 ) / 3 
+                # y = ( y24 + y37 + y51 ) / 3 
                 pred.append(y.argsort(1, descending=True)[:, :15])
                 targets.append(labels)
                 
                 if criterion:
-                    loss += criterion(y, labels)
+                    loss += criterion(y, labels, interval=loss_interval)
                     # loss24 += criterion(y24, labels)
                     # loss37 += criterion(y37, labels)
                     # loss51 += criterion(y51, labels)
@@ -166,7 +174,7 @@ def run(
     # wrong_preds = [result24[2], result37[2], result51[2]]
     
     pred, targets =  torch.cat(pred), torch.cat(targets)
-    top1, top5, wrong_preds = CalculateTopk_and_GetWrongSample( pred, targets)
+    top1, top5, wrong_preds, bias_preds, gt_loc = CalculateTopk_and_GetWrongSample( pred.clone(), targets, angle_threshold)
     loss /= n
     #REVIEW: 3 layer
     # loss24 /= n
@@ -194,7 +202,7 @@ def run(
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
-    return top1, top5, loss, wrong_preds, targets, pred
+    return top1, top5, loss, wrong_preds, targets, pred, bias_preds, gt_loc
 
 
 def parse_opt():

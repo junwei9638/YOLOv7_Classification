@@ -53,7 +53,7 @@ from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_sta
 from utils.loggers import GenericLogger
 from utils.plots import imshow_cls, WriteReport, Plot_What_U_Want
 from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
-                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first)
+                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first, CrossEntropy_LabelSmoothing_CertainInterval)
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -244,7 +244,8 @@ def train(opt, device):
     # Train
     t0 = time.time()
     # REVIEW: change to Focal loss
-    criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
+    # criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
+    criterion = CrossEntropy_LabelSmoothing_CertainInterval(label_smoothing=opt.label_smoothing)
     '''criterion = hub.load(
         'adeelh/pytorch-multi-class-focal-loss',
         model='focal_loss',
@@ -286,20 +287,24 @@ def train(opt, device):
                 
                 preds = model( images )
                 # REVIEW: 3 layer
-                preds_layer24 = preds[:, :360]
-                preds_layer37 = preds[:, 360:720]
-                preds_layer51 = preds[:, 720:]
-                preds_mean = ( preds_layer24 + preds_layer37 + preds_layer51 ) / 3
+                # preds_layer24 = preds[:, :360]
+                # preds_layer37 = preds[:, 360:720]
+                # preds_layer51 = preds[:, 720:]
+                # preds_mean = ( preds_layer24 + preds_layer37 + preds_layer51 ) / 3
                 # loss24 = criterion( preds_layer24, labels )
                 # loss37 = criterion( preds_layer37, labels )
                 # loss51 = criterion( preds_layer51, labels )
                 # loss = loss24 + loss37 + loss51
-                # loss = criterion( preds, labels )
-                loss = criterion( preds_mean, labels )
+                #REVIEW: label smoothing in certain classes
+                # labels = label_smoothing( labels, opt.label_smoothing, cls_interval )
+                loss = criterion( preds, labels, interval=opt.interval )
+                # loss = criterion( preds_mean, labels )
             
             # Backward
             # REVIEW: nn.adaptivePool needs this
             # torch.use_deterministic_algorithms(False)
+            # REVIEW: nn.Upsample, [None, 1, 'bicubic'] needs this
+            torch.use_deterministic_algorithms(mode=True, warn_only=True)
             scaler.scale(loss).backward()
 
             # Optimize
@@ -323,11 +328,13 @@ def train(opt, device):
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss, wrong_preds, targets, topk = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds, targets, topk, bias_preds, gt_loc = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
-                                                     nc=nc)  # test accuracy, loss
+                                                     nc=nc,
+                                                     angle_threshold=opt.thresh,
+                                                     loss_interval=opt.interval)  # test accuracy, loss
                     
                     # REVIEW: 3 layer
                     fitness = top1  # define fitness as top1 accuracy
@@ -342,10 +349,12 @@ def train(opt, device):
         val_batch_images, val_batch_labels = next(iter(valloader))
         val_batch_pred = ema.ema(val_batch_images.to(device))
         # REVIEW: 3 layer
-        val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
+        # val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
         Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
         Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
         Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
+        Plot_What_U_Want( func_name='ang_bias_dis', save_dir=save_dir, epoch=epoch, preds=bias_preds)
+        Plot_What_U_Want( func_name='gt_loc', save_dir=save_dir, epoch=epoch, preds=gt_loc)
         # Log metrics
         if RANK in {-1, 0}:
             # Best fitness
@@ -473,6 +482,8 @@ def parse_opt(known=False):
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--overwrite', action='store_true', default=False,help='overwrite the project')
+    parser.add_argument('--thresh', type=int, default=5, help='angle threshold')
+    parser.add_argument('--interval', type=int, default=5, help='loss interval')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 

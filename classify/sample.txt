@@ -1,2 +1,4 @@
 ['../cifar10/train/truck/truck_4997.png', 9, PosixPath('../cifar10/train/truck/truck_4997.npy'), None]
 python classify/train.py --data data/data.yaml --epochs 300 --img 224 --cfg models/yolov5l_copy.yaml --label-smoothing 0.5 --name traffic --workers 2 --batch-size 32 --device 0,1
+yolov7_backbone summary: 152 layers, 17414920 parameters, 17414920 gradients, 114.1 GFLOPs
+yolov7_backbone_cspElan summary: 165 layers, 12845320 parameters, 12845320 gradients, 42.7 GFLOPs

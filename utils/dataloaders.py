@@ -1256,8 +1256,12 @@ class ClassificationDatasetFromTxt(Dataset):
         xmax = int( x + w/2  )
         ymin = int( y - h/2  )
         ymax = int( y + h/2  )
+        
+        xmin = 0 if xmin < 0 else xmin
+        ymin = 0 if ymin < 0 else ymin
+
         img = img[ymin:ymax, xmin:xmax ]
-        return img
+        return img, [ymin, ymax, xmin, xmax ]
 
     def __getitem__(self, index ):
         index = self.indices[index]
@@ -1269,17 +1273,18 @@ class ClassificationDatasetFromTxt(Dataset):
                 np.save(fn.as_posix(), self.readImg( f, pos ))
             im = np.load(fn)
         else:  # read image
-            im = self.readImg( f, pos )  # BGR
+            im, impos = self.readImg( f, pos )  # BGR
 
         assert im is not None, f'Image Not Found {f}'
         assert label is not None, f'Label Not Found {f}'
         
-        '''try:
-            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+        try:
+            sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
         except:
-            print( f )'''
+            print( f, impos, pos )
+            
 
-        sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
+        # sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
         return sample, label
     
     def __len__(self):

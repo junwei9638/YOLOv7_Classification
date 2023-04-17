@@ -42,6 +42,54 @@ def smart_inference_mode(torch_1_9=check_version(torch.__version__, '1.9.0')):
 
     return decorate
 
+class CrossEntropy_LabelSmoothing_CertainInterval(nn.Module):
+    ''' Cross Entropy Loss with label smoothing '''
+    def __init__(self, label_smoothing=None, class_num=360):
+        super().__init__()
+        self.label_smooth = label_smoothing
+        self.class_num = class_num
+
+    def forward(self, pred, targets, interval=3):
+        ''' 
+        Args:
+            pred: prediction of model output    [N, M]
+            target: ground truth of sampler [N]
+        '''
+        eps = 1e-12
+        
+        if self.label_smooth is not None:
+            # cross entropy loss with label smoothing
+            logprobs = F.log_softmax(pred, dim=1)	# softmax + log
+            tar_id = targets
+            targets = F.one_hot(targets, self.class_num).float()
+            
+            
+            for i, id in enumerate( tar_id ) :
+                    
+                if id - interval >= 0 and id + interval <= self.class_num :
+                    cut_tensor = targets[i, id-interval:id+interval+1 ]
+                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
+                    targets[i] = torch.cat((targets[i, :id-interval], cut_tensor, targets[i, id+interval+1:]), dim=0)
+                
+                elif id - interval < 0 :
+                    cut_tensor = targets[i, :id+interval ]
+                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
+                    targets[i] = torch.cat( (cut_tensor, targets[i, id+interval:]), dim=0)
+                    
+                elif id + interval > self.class_num :
+                    cut_tensor = targets[i, id-interval: ]
+                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
+                    targets[i] = torch.cat((targets[i, :id-interval], cut_tensor), dim=0)
+            
+            # targets = torch.clamp(targets.float(), min=self.label_smooth/(self.class_num-1), max=1.0-self.label_smooth)
+            
+            loss = -1*torch.sum(targets*logprobs, 1)
+        
+        else:
+            # standard cross entropy loss
+            loss = -1.*pred.gather(1, targets.unsqueeze(-1)) + torch.log(torch.exp(pred+eps).sum(dim=1))
+
+        return loss.mean()
 
 def smartCrossEntropyLoss(label_smoothing=0.0):
     # Returns nn.CrossEntropyLoss with label smoothing enabled for torch>=1.10.0
