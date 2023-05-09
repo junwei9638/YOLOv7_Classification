@@ -28,7 +28,7 @@ from pathlib import Path
 import torch
 from tqdm import tqdm
 from utils.general import MedianFilter, ZScoreFilter, MedianFilter120
-
+from utils.plots import Plot_What_U_Want
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -39,24 +39,32 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 from models.common import DetectMultiBackend
 from utils.dataloaders import create_classification_dataloader
 from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args
-from utils.torch_utils import select_device, smart_inference_mode
+from utils.torch_utils import select_device, smart_inference_mode, gaussian_filter_1d
 
-def CalculateTopk_and_GetWrongSample( pred, targets, threshold, post_process=False, device=None):
+def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_process=False, device=None):
     wrong_preds = []
+    wrong_values = []
     bias_preds = []
     gt_loc = []
     
     # REVIEW: get the wrong pred samples and bias_pred
+    bias = pred.clone()
+    
     for i, target in enumerate(targets):
-        if pred[i][0] != target :
-            wrong_preds.append( [pred[i][0].clone(), target])
-        bias_preds.append( ( pred[i][0] - target ) )
+        bias[i] = abs( bias[i] - target )
+        
+        if bias[i][0] > threshold :
+            wrong_preds.append( [pred[i][0], target] )
+            if torch.any( pred[i][:] == target ):
+                wrong_values.append( [ target, value[i][0], value[i][torch.where( pred[i][:] == target )]] )
+        # if pred[i][0] != target :
+        #     wrong_preds.append( [pred[i][0].clone(), target])
+        
+        bias_preds.append( bias[i][0] )
         
     #REVIEW: get bias of top15 and location of top1
-        pred[i] = abs(pred[i] - target)
-        
-        if torch.any( pred[i] <= threshold ):
-            gt_loc.append( torch.where( pred[i] <= threshold )[0][0] )
+        if torch.any( bias[i] <= threshold ):
+            gt_loc.append( torch.where( bias[i] <= threshold )[0][0] )
     
     
     if post_process:
@@ -64,11 +72,17 @@ def CalculateTopk_and_GetWrongSample( pred, targets, threshold, post_process=Fal
     # pred = ZScoreFilter( pred.cpu().numpy(), device )
 
     # REVIEW: add threshhold of angle
-    correct = torch.where( pred <= threshold, torch.tensor(1), torch.tensor(0) ).float()
+    correct = torch.where( bias <= threshold, torch.tensor(1), torch.tensor(0) ).float()
     # correct = (targets[:, None] == pred).float()
+    
     acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
     top1, top5 = acc.mean(0).tolist()
-    return top1, top5, wrong_preds, bias_preds, gt_loc
+    return top1, top5, wrong_preds, bias_preds, gt_loc, wrong_values, correct
+
+def Guas_Compare( y, y_gau):
+    # print( y[:, 0], y_gau[:, 0])
+    diff_count = sum([1 for x, y in zip(y[:, 0], y_gau[:, 0]) if x != y])
+    return diff_count
 
 @smart_inference_mode()
 def run(
@@ -90,7 +104,9 @@ def run(
     pbar=None,
     nc=None,
     angle_threshold=5,
-    loss_interval=5
+    gaussian = None,
+    save_dir = None,
+    epoch = None
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -129,12 +145,14 @@ def run(
                                                       workers=workers)
 
     model.eval()
-    pred, pred24, pred37, pred51, targets, loss, dt = [], [], [], [], [], 0, (Profile(), Profile(), Profile())
-    loss24, loss37, loss51 = 0, 0, 0
+    pred, pred24, pred37, pred51, value, targets, loss, dt = [], [], [], [], [], [], 0, (Profile(), Profile(), Profile())
+    loss24, loss37, loss51, gau_count = 0, 0, 0, 0
     n = len(dataloader)  # number of batches
+    
     # REVIEW: make action directly
     action = 'validating'
     # action = 'validating' if dataloader.dataset.root.stem == 'val' else 'testing'
+    
     desc = f"{pbar.desc[:-36]}{action:>36}" if pbar else f"{action}"
     bar = tqdm(dataloader, desc, n, not training, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}', position=0)
     with torch.cuda.amp.autocast(enabled=device.type != 'cpu'):
@@ -143,28 +161,44 @@ def run(
                 images, labels = images.to(device, non_blocking=True), labels.to(device)
 
             with dt[1]:
-                #REVIEW: 3 layer
+                
                 y = model( images ) 
+                
+                #REVIEW: gaussian
+                # y_before_gau = y.clone()
+                # y = gaussian_filter_1d( y, kernel_size=int(gaussian[0]), sigma=int(gaussian[1]), save_dir=save_dir, device=device)
+                # gau_count += Guas_Compare(y_before_gau.argsort(1, descending=True)[:, :15], y.argsort(1, descending=True)[:, :15])
+                
+                #REVIEW: 3 layer
                 # y24 = y[:, :360]
                 # y37 = y[:, 360:720]
                 # y51 = y[:, 720:]
             with dt[2]:
                 
-                # REVIEW: top15
+                # REVIEW: 3 layer
                 # pred24.append(y24.argsort(1, descending=True)[:, :15])
                 # pred37.append(y37.argsort(1, descending=True)[:, :15])
                 # pred51.append(y51.argsort(1, descending=True)[:, :15])
                 # y = ( y24 + y37 + y51 ) / 3 
-                pred.append(y.argsort(1, descending=True)[:, :15])
+                
+                pred.append( y.argsort(1, descending=True)[:, :15] )
+                value.append( y.sort( 1, descending=True)[0][:, :15] )
                 targets.append(labels)
                 
                 if criterion:
-                    loss += criterion(y, labels, interval=loss_interval)
+                    loss += criterion(y, labels )
+                    
+                    # REVIEW: 3 layer
                     # loss24 += criterion(y24, labels)
                     # loss37 += criterion(y37, labels)
                     # loss51 += criterion(y51, labels)
                     # loss = loss24 + loss37 + loss51
-
+    
+    #REVIEW: gaussian
+    # print( 'differet count: ', gau_count )
+    # Plot_What_U_Want( func_name='gaussian', save_dir=save_dir, epoch=epoch, preds=y, targets=y_before_gau)
+    
+    # REVIEW: 3 layers
     # pred24, pred37, pred51, targets = torch.cat(pred24), torch.cat(pred37), torch.cat(pred51), torch.cat(targets)
     # result24 = CalculateTopk_and_GetWrongSample( pred24, targets )
     # result37 = CalculateTopk_and_GetWrongSample( pred37, targets )
@@ -173,22 +207,27 @@ def run(
     # top5 = [result24[1], result37[1], result51[1]]
     # wrong_preds = [result24[2], result37[2], result51[2]]
     
-    pred, targets =  torch.cat(pred), torch.cat(targets)
-    top1, top5, wrong_preds, bias_preds, gt_loc = CalculateTopk_and_GetWrongSample( pred.clone(), targets, angle_threshold)
+    pred, targets, value =  torch.cat(pred), torch.cat(targets), torch.cat(value)
+    top1, top5, wrong_preds, bias_preds, gt_loc, wrong_values, correct = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value,angle_threshold)
     loss /= n
-    #REVIEW: 3 layer
+    
+    # REVIEW: 3 layers
     # loss24 /= n
     # loss37 /= n
     # loss51 /= n
 
     if pbar:
-        #REVIEW: 3 layer
+        
+        # REVIEW: 3 layer
         # pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1[-1]:>12.3g}{top5[-1]:>12.3g}"
+        
         pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1:>12.3g}{top5:>12.3g}"
     if verbose:  # all classes
         LOGGER.info(f"{'Class':>24}{'Images':>12}{'top1_acc':>12}{'top5_acc':>12}")
-        #REVIEW: 3 layer
+        
+        # REVIEW: 3 layer
         # LOGGER.info(f"{'all':>24}{targets.shape[0]:>12}{top1[-1]:>12.3g}{top5[-1]:>12.3g}")
+        
         LOGGER.info(f"{'all':>24}{targets.shape[0]:>12}{top1:>12.3g}{top5:>12.3g}")
         for i, c in model.names.items():
             aci = acc[targets == i]
@@ -200,9 +239,11 @@ def run(
         shape = (1, 3, imgsz, imgsz)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms post-process per image at shape {shape}' % t)
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
+    
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
-    return top1, top5, loss, wrong_preds, targets, pred, bias_preds, gt_loc
+    
+    return top1, top5, loss, wrong_preds, targets, pred, bias_preds, gt_loc, wrong_values, correct
 
 
 def parse_opt():

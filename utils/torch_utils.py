@@ -12,6 +12,7 @@ import warnings
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 import torch
 import torch.distributed as dist
@@ -42,52 +43,79 @@ def smart_inference_mode(torch_1_9=check_version(torch.__version__, '1.9.0')):
 
     return decorate
 
-class CrossEntropy_LabelSmoothing_CertainInterval(nn.Module):
-    ''' Cross Entropy Loss with label smoothing '''
-    def __init__(self, label_smoothing=None, class_num=360):
-        super().__init__()
-        self.label_smooth = label_smoothing
-        self.class_num = class_num
 
-    def forward(self, pred, targets, interval=3):
-        ''' 
-        Args:
-            pred: prediction of model output    [N, M]
-            target: ground truth of sampler [N]
-        '''
-        eps = 1e-12
-        
-        if self.label_smooth is not None:
-            # cross entropy loss with label smoothing
-            logprobs = F.log_softmax(pred, dim=1)	# softmax + log
-            tar_id = targets
-            targets = F.one_hot(targets, self.class_num).float()
-            
-            
-            for i, id in enumerate( tar_id ) :
-                    
-                if id - interval >= 0 and id + interval <= self.class_num :
-                    cut_tensor = targets[i, id-interval:id+interval+1 ]
-                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
-                    targets[i] = torch.cat((targets[i, :id-interval], cut_tensor, targets[i, id+interval+1:]), dim=0)
-                
-                elif id - interval < 0 :
-                    cut_tensor = targets[i, :id+interval ]
-                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
-                    targets[i] = torch.cat( (cut_tensor, targets[i, id+interval:]), dim=0)
-                    
-                elif id + interval > self.class_num :
-                    cut_tensor = targets[i, id-interval: ]
-                    cut_tensor = torch.clamp( cut_tensor.float(), min=self.label_smooth/len(cut_tensor), max=1.0-self.label_smooth)
-                    targets[i] = torch.cat((targets[i, :id-interval], cut_tensor), dim=0)
-            
-            # targets = torch.clamp(targets.float(), min=self.label_smooth/(self.class_num-1), max=1.0-self.label_smooth)
-            
-            loss = -1*torch.sum(targets*logprobs, 1)
+def gaussian_kernel(size, sigma, save_dir=None):
+    x = torch.arange(-(size // 2), size // 2 + 1).float()
+    kernel = torch.exp(-0.5 * (x / sigma)**2)
+    kernel = kernel / kernel.sum()
+    
+    if save_dir is not None:
+        fig, ax = plt.subplots()
+        ax.plot(kernel)
+        ax.set(title=f"1D Gaussian kernel (size={size}, sigma={sigma})", xlabel="Index", ylabel="Value")
+        fig.savefig( os.path.join( save_dir, 'GaussianFilter.png' ) )
+        plt.close()
+    
+    return kernel.unsqueeze(0)
+
+def gaussian_filter_1d(input, kernel_size, sigma, save_dir, device):
+
+    kernel = gaussian_kernel(kernel_size, sigma, save_dir).half().to(device)
+    
+    # Apply 1D convolution with Gaussian kernel, Conv1d need three dimension batch size, number of channels, and length
+    output = F.conv1d( input.unsqueeze(1), kernel.unsqueeze(1), padding='same' )
+    
+    # Remove dimension from output tensor
+    return output.squeeze(1)
+
+def gaussian_label_csl( targets, num_class, u=0, sig=4.0, save_dir=None ):
+    '''
+    转换成CSL Labels：
+        用高斯窗口函数根据角度θ的周期性赋予gt labels同样的周期性，使得损失函数在计算边界处时可以做到“差值很大但loss很小”；
+        并且使得其labels具有环形特征，能够反映各个θ之间的角度距离
+    Args:
+        label (float32):[1], theta class
+        num_theta_class (int): [1], theta class num
+        u (float32):[1], μ in gaussian function
+        sig (float32):[1], σ in gaussian function, which is window radius for Circular Smooth Label
+    Returns:
+        csl_label (array): [num_theta_class], gaussian function smooth label
+    '''
+    x = torch.arange(-num_class/2, num_class/2)
+    y_sig = torch.exp(-(x - u) ** 2 / (2 * sig ** 2))
+    
+    if save_dir is not None:
+        fig, ax = plt.subplots()
+        ax.plot( y_sig )
+        ax.set(title=f"1D Gaussian kernel (size={num_class}, sigma={sig})", xlabel="Index", ylabel="Value")
+        fig.savefig( os.path.join( save_dir, 'GaussianFilter.png' ) )
+        plt.close()
+    
+    csl_labels = F.one_hot(targets, num_class).float()
+    
+    for i, target in enumerate( targets ) :
+        index = int(num_class/2 - target.cpu().numpy())
+        csl_labels[i] = torch.cat( ( y_sig[index:], y_sig[:index] ), dim=0)
+    
+    return csl_labels
+
+class crossEntropy_CSL(nn.Module):
+    def __init__(self, label_processing=None, num_class=360, save_dir=None, device=None):
+        super().__init__()
+        self.label_processing = label_processing
+        self.num_class = num_class
+        self.save_dir = save_dir
+        self.device = device
+
+    def forward(self, preds, targets):
+
+        if self.label_processing == 'csl':
+            targets = gaussian_label_csl( targets, self.num_class, u=0, sig=4.0, save_dir=self.save_dir )
+            loss = F.cross_entropy(preds, targets)
         
         else:
             # standard cross entropy loss
-            loss = -1.*pred.gather(1, targets.unsqueeze(-1)) + torch.log(torch.exp(pred+eps).sum(dim=1))
+            loss = F.cross_entropy(preds, targets)
 
         return loss.mean()
 
@@ -98,7 +126,6 @@ def smartCrossEntropyLoss(label_smoothing=0.0):
     if label_smoothing > 0:
         LOGGER.warning(f'WARNING ⚠️ label smoothing {label_smoothing} requires torch>=1.10.0')
     return nn.CrossEntropyLoss()
-
 
 def smart_DDP(model):
     # Model DDP creation with checks

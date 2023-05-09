@@ -1061,23 +1061,25 @@ class Classify(nn.Module):
         super().__init__()
         c_ = c1  # efficientnet_b0 size
         self.conv = Conv(c1, c_, k, s, autopad(k, p), g)
-        self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,1)
         
-        self.bn = nn.BatchNorm2d(c_)
+        # self.conv = nn.Conv2d(c1, c_, k, s, autopad(k, p, 1), groups=g, dilation=1, bias=False)
+        # self.bn = nn.BatchNorm2d(c_)
+        # self.tan = nn.Tanh()
+        # self.sigmoid = nn.Sigmoid()
+        
+        self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,ㄕ1)
         self.drop = nn.Dropout(p=0.0, inplace=True)
         self.linear = nn.Linear(c_,  c2)  # to x(b,c2)
-        # REVIEW: add sigmoid behind linear layer
-        self.sigmoid = nn.Sigmoid()
+        
     def forward(self, x):
         if isinstance(x, list):
             x = torch.cat(x, 1) 
         
-        x = self.pool( self.sigmoid( self.bn( self.conv(x) ) ) ).flatten(1)
-        # x = self.pool(self.conv(x) ).flatten(1)
-        x = self.linear( self.drop( x ) )
+        # x = self.sigmoid(  self.bn( self.conv(x) )  ) 
+        x = self.conv(x)
+        x = self.linear( self.drop( self.pool( x ).flatten(1) ) ) 
         return x 
         
         # return self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) )
-        # return torch.exp(self.linear( self.drop( self.pool( self.conv(x) ).flatten(1) ) ))
 
 

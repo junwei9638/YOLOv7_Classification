@@ -691,7 +691,58 @@ def Plot_Gt_Location( preds, path, epoch ) :
     plt.savefig( os.path.join( path, ( 'angle_bias_epoch' + str(epoch) ) ) )
     plt.close()
     
-#REVIEW: 3 layer
+def Plot_Guassian( preds, targets, path, epoch ):
+    pred = preds[0, :].detach().cpu().numpy()
+    target = targets[0, :].detach().cpu().numpy()
+    pred_max = np.argmax(pred)
+    tar_max = np.argmax(target)
+    label_range = np.arange(0, 360)
+    plt.title('original: '+str(tar_max)+', gaussian: '+str(pred_max), fontsize=20)
+    plt.ylabel( 'Value', fontsize=10 )
+    plt.xlabel( 'Angle', fontsize=10 )
+    plt.plot( label_range, target, 'y-')
+    plt.plot( label_range, pred, 'r-' )
+    
+    # plt.text(50, 50, 'original: '+str(tar_max)+', gaussiaun: '+str(pred_max), fontsize=12, color='black')
+
+    plt.savefig( os.path.join( path, ( 'gaussian_epoch' + str(epoch) ) ) )
+    plt.close()
+    
+def Plot_Value_Different( wrong_values, save_func_dir, epoch ):
+    targets, pred_values, target_values = [], [], []
+    for value in wrong_values:
+        targets.append( value[0].cpu().numpy() )
+        pred_values.append( value[1].cpu().numpy() )
+        target_values.append( value[2].cpu().numpy() )
+        
+    plt.title('Pred_Target Value', fontsize=20)
+    plt.ylabel( 'Value', fontsize=10 )
+    plt.xlabel( 'Angle', fontsize=10 )
+    plt.plot( targets, pred_values, 'y.')
+    plt.plot( targets, target_values, 'r.' )
+    plt.savefig( os.path.join( save_func_dir, ( 'pred_target_epoch' + str(epoch) ) ) )
+    plt.close()
+
+def Plot_Topk_CDF( corrects, save_func_dir, epoch ):
+    corrects = corrects.detach().cpu().numpy()
+    topk = []
+    topk_len = len(corrects[0, :]) 
+    batch_size = len(corrects[:,0])
+    label_range = np.arange(1, topk_len+1)
+    
+    for i in range(topk_len):
+        acc = corrects[:, :i+1].sum() /  batch_size 
+        # print( acc )
+        topk.append( acc )
+        
+    # print( topk )
+    plt.title( 'TopK_CDF' )
+    plt.ylabel( 'Value', fontsize=10 )
+    plt.xlabel( 'Topk', fontsize=10 )
+    plt.plot( label_range, topk, 'r-')
+    plt.savefig( os.path.join( save_func_dir, ( 'topk_CDF_epoch' + str(epoch) ) ) )
+    plt.close()
+
 def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
     layer = ['51']
     save_func_dir = os.path.join( save_dir, func_name )
@@ -715,3 +766,9 @@ def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
         Plot_Angle_Bias_Distribution( preds, save_func_dir, epoch )
     elif func_name == 'gt_loc':
         Plot_Gt_Location( preds, save_func_dir, epoch )
+    elif func_name == 'gaussian':
+        Plot_Guassian( preds, targets,save_func_dir, epoch )
+    elif func_name == 'value_difference':
+        Plot_Value_Different( preds, save_func_dir, epoch )
+    elif func_name == 'topk_cdf':
+        Plot_Topk_CDF( preds, save_func_dir, epoch )

@@ -340,7 +340,7 @@ def parse_classification_model(d, ch):  # model_dict, input_channels(3)
     no = nc   # number of outputs = anchors * (classes + 5)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d['backbone'] ): # from, number, module, args
+    for i, (f, n, m, args) in enumerate(d['backbone']): # from, number, module, args
         m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
             with contextlib.suppress(NameError):

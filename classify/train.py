@@ -31,6 +31,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torchvision
 from torch.cuda import amp
 from tqdm import tqdm
+from torchsummary import summary
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -51,9 +52,9 @@ import pandas as pd
 from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_status, check_requirements, colorstr,
                            download, increment_path, init_seeds, print_args, yaml_save, check_yaml, check_dataset, check_file, get_latest_run)
 from utils.loggers import GenericLogger
-from utils.plots import imshow_cls, WriteReport, Plot_What_U_Want
-from utils.torch_utils import (ModelEMA, model_info, reshape_classifier_output, select_device, smart_DDP,
-                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first, CrossEntropy_LabelSmoothing_CertainInterval)
+from utils.plots import imshow_cls, Plot_What_U_Want
+from utils.torch_utils import (ModelEMA, model_info, select_device, smart_DDP,
+                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first, crossEntropy_CSL )
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -62,6 +63,7 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 def train(opt, device):
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
+    
     # REVIEW: change data = Path(opt.data) to data = opt.data
     save_dir, data, bs, epochs, nw, imgsz, pretrained = \
         opt.save_dir, opt.data, opt.batch_size, opt.epochs, min(os.cpu_count() - 1, opt.workers), \
@@ -99,12 +101,14 @@ def train(opt, device):
 
     # REVIEW: change type path to str
     # Hyperparameters
-    opt.hyp = str( opt.hyp )
-    with open(opt.hyp, errors='ignore') as f:
-        hyp = yaml.safe_load(f)  # load hyps dict
-    LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
-    opt.hyp = hyp.copy()  # for saving hyps to checkpoints
-
+    if opt.hyp != None:
+        opt.hyp = str( opt.hyp )
+        with open(opt.hyp, errors='ignore') as f:
+            hyp = yaml.safe_load(f)  # load hyps dict
+        LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
+        opt.hyp = hyp.copy()  # for saving hyps to checkpoints
+    
+    classes = data_dict['names']
     trainloader = create_classification_dataloader(data=data_dict,
                                                    mode='train',
                                                    imgsz=imgsz,
@@ -112,7 +116,8 @@ def train(opt, device):
                                                    augment=True,
                                                    cache=opt.cache,
                                                    rank=LOCAL_RANK,
-                                                   workers=nw)
+                                                   workers=nw,
+                                                   hyp=opt.hyp)
 
     valloader = create_classification_dataloader(data=data_dict,
                                                    mode='val',
@@ -124,7 +129,7 @@ def train(opt, device):
                                                    workers=nw)
     
     testloader = create_classification_dataloader(data=data_dict,
-                                                   mode='test',
+                                                   mode='val',
                                                    imgsz=imgsz,
                                                    batch_size=bs // WORLD_SIZE,
                                                    augment=True,
@@ -195,20 +200,40 @@ def train(opt, device):
 
         # reshape_classifier_output(model, nc)  # update class count
 
+    # REVIEW: add freeze 
+    freeze = [f'model.{x}.' for x in (opt.freeze if len(opt.freeze) > 1 else range(opt.freeze[0]))]  # layers to freeze
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # train all layers
+        if any(x in k for x in freeze):
+            LOGGER.info(f'freezing {k}')
+            v.requires_grad = False
+            
     for m in model.modules():
         if not pretrained and hasattr(m, 'reset_parameters'):
+            LOGGER.info( ' -----------reset_parameters----------- ')
             m.reset_parameters()
         if isinstance(m, torch.nn.Dropout) and opt.dropout is not None:
             m.p = opt.dropout  # set dropout
-    for p in model.parameters():
-        p.requires_grad = True  # for training
+    
+    # REVIEW: freeze already do this
+    # for p in model.parameters():
+    #     p.requires_grad = True  # for training
+    
     model = model.to(device)
 
+    #REVIEW: open a file for writing the summary
+    with open(os.path.join( save_dir, 'model.txt'), 'w') as f:
+        f.write( str(model) )
+        f.write( 'Freeze layer: '+ str(opt.freeze) )
+
+        
     # Info
     if RANK in {-1, 0}:
-        model.names = trainloader.dataset.classes  # attach class names
-        #model.transforms = valloader.dataset.torch_transforms # attach inference transforms
+        model.names = classes  # attach class names
         model.transforms = valloader.dataset.album_transforms # attach inference transforms
+        # model.names = trainloader.dataset.classes  # attach class names
+        # model.transforms = valloader.dataset.torch_transforms # attach inference transforms
+        
         model_info(model)
         if opt.verbose:
             LOGGER.info(model)
@@ -216,10 +241,13 @@ def train(opt, device):
         # REVIEW: catch one train batch info with dataloader
         batch_images, batch_labels = next(iter(trainloader))
         file = imshow_cls(batch_images[:25], batch_labels[:25], names=model.names, f=save_dir / 'train_images.jpg')
+        
         logger.log_images(file, name='Train Examples')
         logger.log_graph(model, imgsz)  # log model
+    
     # Optimizer
     optimizer = smart_optimizer(model, opt.optimizer, opt.lr0, momentum=0.9, decay=opt.decay)
+    
     # Scheduler
     lrf = 0.01  # final lr (fraction of lr0)
     # lf = lambda x: ((1 + math.cos(x * math.pi / epochs)) / 2) * (1 - lrf) + lrf  # cosine
@@ -243,18 +271,11 @@ def train(opt, device):
 
     # Train
     t0 = time.time()
+    
     # REVIEW: change to Focal loss
-    # criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
-    criterion = CrossEntropy_LabelSmoothing_CertainInterval(label_smoothing=opt.label_smoothing)
-    '''criterion = hub.load(
-        'adeelh/pytorch-multi-class-focal-loss',
-        model='focal_loss',
-        alpha=None,
-        gamma=2,
-        device=device,
-        reduction='mean',
-        force_reload=False
-    )'''
+    criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
+    # criterion = crossEntropy_CSL( label_processing='csl', save_dir=save_dir, device=device )
+    # criterion = hub.load( 'adeelh/pytorch-multi-class-focal-loss', model='focal_loss', alpha=None, gamma=2, device=device, reduction='mean', force_reload=False )
 
     best_fitness = 0.0
     scaler = amp.GradScaler(enabled=cuda)
@@ -286,6 +307,7 @@ def train(opt, device):
             with amp.autocast(enabled=cuda):  # stability issues when enabled
                 
                 preds = model( images )
+                
                 # REVIEW: 3 layer
                 # preds_layer24 = preds[:, :360]
                 # preds_layer37 = preds[:, 360:720]
@@ -295,16 +317,18 @@ def train(opt, device):
                 # loss37 = criterion( preds_layer37, labels )
                 # loss51 = criterion( preds_layer51, labels )
                 # loss = loss24 + loss37 + loss51
-                #REVIEW: label smoothing in certain classes
-                # labels = label_smoothing( labels, opt.label_smoothing, cls_interval )
-                loss = criterion( preds, labels, interval=opt.interval )
+                
+                loss = criterion( preds, labels )
                 # loss = criterion( preds_mean, labels )
             
             # Backward
+            
             # REVIEW: nn.adaptivePool needs this
             # torch.use_deterministic_algorithms(False)
+            
             # REVIEW: nn.Upsample, [None, 1, 'bicubic'] needs this
             torch.use_deterministic_algorithms(mode=True, warn_only=True)
+            
             scaler.scale(loss).backward()
 
             # Optimize
@@ -319,22 +343,27 @@ def train(opt, device):
             if RANK in {-1, 0}:
                 # Print
                 tloss = (tloss * i + loss.item()) / (i + 1)  # update mean losses
+                
                 # REVIEW: 3 layer
                 # tloss24 = (tloss24 * i + loss24.item()) / (i + 1)  # update mean losses
                 # tloss37 = (tloss37 * i + loss37.item()) / (i + 1)  # update mean losses
                 # tloss51 = (tloss51 * i + loss51.item()) / (i + 1)  # update mean losses
+                
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 pbar.desc = f"{f'{epoch + 1}/{epochs}':>10}{mem:>10}{tloss:>12.3g}" + ' ' * 36
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss, wrong_preds, targets, topk, bias_preds, gt_loc = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds, targets, topk, bias_preds, gt_loc, wrong_values, correct = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc,
                                                      angle_threshold=opt.thresh,
-                                                     loss_interval=opt.interval)  # test accuracy, loss
+                                                     gaussian=opt.gaussian,
+                                                     save_dir=save_dir, 
+                                                     epoch=epoch
+                                                     )  # test accuracy, loss
                     
                     # REVIEW: 3 layer
                     fitness = top1  # define fitness as top1 accuracy
@@ -355,6 +384,9 @@ def train(opt, device):
         Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
         Plot_What_U_Want( func_name='ang_bias_dis', save_dir=save_dir, epoch=epoch, preds=bias_preds)
         Plot_What_U_Want( func_name='gt_loc', save_dir=save_dir, epoch=epoch, preds=gt_loc)
+        Plot_What_U_Want( func_name='value_difference', save_dir=save_dir, epoch=epoch, preds=wrong_values )
+        Plot_What_U_Want( func_name='topk_cdf', save_dir=save_dir, epoch=epoch, preds=correct )
+        # Plot_What_U_Want( func_name='gaussian', save_dir=save_dir, epoch=epoch, preds=preds, targets=preds_before_gaussian)
         # Log metrics
         if RANK in {-1, 0}:
             # Best fitness
@@ -476,14 +508,15 @@ def parse_opt(known=False):
     parser.add_argument('--verbose', action='store_true', help='Verbose mode')
     parser.add_argument('--seed', type=int, default=0, help='Global training seed')
     parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
-    parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
+    parser.add_argument('--hyp', type=str, default=None, help='hyperparameters path')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--overwrite', action='store_true', default=False,help='overwrite the project')
-    parser.add_argument('--thresh', type=int, default=5, help='angle threshold')
-    parser.add_argument('--interval', type=int, default=5, help='loss interval')
+    parser.add_argument('--thresh', type=int, default=0, help='angle threshold')
+    parser.add_argument('--gaussian', nargs='+', type=int, default=(11,5), help='kernel_size, sigma')
+    parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone=10, first3=0 1 2')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 

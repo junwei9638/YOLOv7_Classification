@@ -25,8 +25,9 @@ import torch.nn.functional as F
 import torchvision
 import yaml
 from PIL import ExifTags, Image, ImageOps
-from torch.utils.data import DataLoader, Dataset, dataloader, distributed
+from torch.utils.data import DataLoader, Dataset, dataloader, distributed,  ConcatDataset
 from tqdm import tqdm
+import imutils
 
 from utils.augmentations import (Albumentations, augment_hsv, classify_albumentations, classify_transforms, copy_paste,
                                  cutout, letterbox, mixup, random_perspective)
@@ -1195,32 +1196,25 @@ class ClassificationDataset(torchvision.datasets.ImageFolder):
         
         return sample, j
 
-# TODO: dataset load from txt
+# REVIEW: dataset load from txt
 class ClassificationDatasetFromTxt(Dataset):
-    """
-    YOLOv5 Classification Dataset.
-    Arguments
-        root:  Dataset path
-        transform:  torchvision transforms, used by default
-        album_transform: Albumentations transforms, used if installed
-    """
 
-    def __init__(self, yaml_data, mode, augment, imgsz, cache=False):
+    def __init__(self, yaml_data, mode, augment, imgsz, cache=False, aug_type=None):
         super().__init__()
         self.cache_ram = cache is True or cache == 'ram'
         self.cache_disk = cache == 'disk'
-        self.samples, self.classes = self.parse_label_file( yaml_data, mode )
+        self.samples = self.parse_label_file( yaml_data, mode )
         self.indices = range( self.dataSize )
         self.img_size = imgsz
         self.augment = augment
         self.labels=[]
         self.torch_transforms = classify_transforms(imgsz)
         self.album_transforms = classify_albumentations(augment, imgsz, mode=mode) if augment else None
+        self.aug_type = aug_type
 
     def parse_label_file( self, yaml_data, mode ):
         samples = []
         file_txt = yaml_data[ mode ] # train, val, test
-        classes = yaml_data['names']
         with open( file_txt, 'r') as img_files:
 
             for img in img_files:
@@ -1236,7 +1230,7 @@ class ClassificationDatasetFromTxt(Dataset):
                         samples.append( [img ,cls_index, img_location, Path(img).with_suffix('.npy'), None] )
         
         self.dataSize = len(samples)
-        return samples, classes
+        return samples
     
     def readImg( self, file, pos ):
         img = cv2.imread( file )
@@ -1262,6 +1256,19 @@ class ClassificationDatasetFromTxt(Dataset):
 
         img = img[ymin:ymax, xmin:xmax ]
         return img, [ymin, ymax, xmin, xmax ]
+    
+    def rotate_with_background(self, img, angle, bg_color=(128, 128, 128)):
+
+        # Rotate the original image and place it on top of the background image
+        rotated = imutils.rotate_bound(img, angle)
+        
+         # Create a new image with the desired background color
+        # height, width = rotated.shape[:2]
+        # bg_image = np.ones((height, width, 3), dtype=np.uint8)
+        # bg_image[:] = bg_color
+        # result = cv2.bitwise_and(rotated, bg_image)
+
+        return rotated
 
     def __getitem__(self, index ):
         index = self.indices[index]
@@ -1278,6 +1285,22 @@ class ClassificationDatasetFromTxt(Dataset):
         assert im is not None, f'Image Not Found {f}'
         assert label is not None, f'Label Not Found {f}'
         
+        if self.aug_type == 'flipud' :
+            im = cv2.flip(im, 0)
+            if label != 0 :
+                label = 360 - label
+        elif self.aug_type == 'fliplr':
+            im = cv2.flip(im, 1)
+            label = 180 - label
+            if label < 0:
+                label += 360
+        elif isinstance(self.aug_type, int) :
+            im = self.rotate_with_background(img=im, angle=-self.aug_type)
+            label += self.aug_type
+            if label >= 360 :
+                label -= 360
+        
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
         try:
             sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
         except:
@@ -1301,11 +1324,24 @@ def create_classification_dataloader(# path,
                                      rank=-1,
                                      workers=0,
                                      shuffle=True,
+                                     hyp=None
                                      ):
     # Returns Dataloader object to be used with YOLOv5 Classifier
     with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
         #dataset = ClassificationDataset( root=path, imgsz=imgsz, augment=augment, cache=cache)
-        dataset = ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache)
+        if hyp != None:
+            datasetList = []
+            datasetList.append( ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache ))
+            if hyp['flipud']:
+                datasetList.append( ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache, aug_type='flipud'))
+            if hyp['fliplr']:
+                datasetList.append( ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache, aug_type='flipud'))
+            if len(hyp['rotateAngle']) != 0:
+                for rotateAngle in hyp['rotateAngle']:
+                    datasetList.append( ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache, aug_type=rotateAngle))
+            dataset = ConcatDataset(datasetList)
+        else: 
+            dataset = ClassificationDatasetFromTxt( yaml_data=data, mode=mode, imgsz=imgsz, augment=augment, cache=cache)
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])
