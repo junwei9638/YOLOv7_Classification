@@ -26,6 +26,7 @@ from utils.metrics import fitness
 from utils.segment.general import scale_image
 from sklearn import metrics as ms
 from collections import Counter
+import collections
 
 # Settings
 RANK = int(os.getenv('RANK', -1))
@@ -661,17 +662,22 @@ def Plot_Topk_Distribution( topk, target, path, epoch) :
     
 def Plot_Angle_Bias_Distribution( preds, path, epoch ) :
     preds = [int(pred.cpu().numpy()) for pred in preds] 
-    counted_list = Counter(preds)
-    elements = []
-    counts = []
-    for elem, count in counted_list.items():
-        elements.append(elem)
-        counts.append(count)
-    
+    elements = ['315-45', '45-135', '135-225', '225-315']
+    counts = [0, 0, 0, 0]
+    for pred in preds:
+        if pred >= 315 or pred < 45 :
+            counts[0] += 1 
+        elif pred >= 45 and pred < 135:
+            counts[1] += 1 
+        elif pred >= 135 and pred < 225:
+            counts[2] += 1 
+        elif pred >= 225 and pred < 315:
+            counts[3] += 1 
+    counts = [ float(x) / len(preds) * 100 for x in counts ]
     plt.title('Angle Bias Distribution', fontsize=20)
-    plt.ylabel( 'Times', fontsize=10 )
+    plt.ylabel( '%', fontsize=10 )
     plt.xlabel( 'Bias', fontsize=10 )
-    plt.bar(elements,counts)
+    plt.bar( elements,counts )
     plt.savefig( os.path.join( path, ( 'angle_bias_epoch' + str(epoch) ) ) )
     plt.close()
     
@@ -742,6 +748,84 @@ def Plot_Topk_CDF( corrects, save_func_dir, epoch ):
     plt.plot( label_range, topk, 'r-')
     plt.savefig( os.path.join( save_func_dir, ( 'topk_CDF_epoch' + str(epoch) ) ) )
     plt.close()
+    
+def Plot_Bias_Topk( bias_angle, save_func_dir, epoch ):
+    bias_angle = bias_angle.detach().cpu().numpy()
+    fig = plt.figure(figsize=(12,12))
+    fig.supxlabel('TopK' )
+    fig.supylabel('%')
+    # fig.suptitle("Title for whole figure", fontsize=16)
+    count_list =[]
+    angles = [ 0, 45, 90, 135, 180, 225, 270, 315 ]
+    label_range = np.arange(1, len(bias_angle[0, :])+1)
+    
+    for j, angle in enumerate(angles):
+        topk_count = np.zeros(15, dtype=int)
+        
+        for topk_bias in bias_angle:
+            for i, bias in enumerate(topk_bias):
+                if angle == 0 :
+                    if bias >= 360 or ( bias != 0 and bias <= 10 ):
+                        topk_count[i] += 1
+                elif bias >= angle-10 and bias <= angle+10:
+                    topk_count[i] += 1
+        # topk_count = topk_count.astype(float) / len(bias_angle[:, 0]) * 100
+        count_list.append( topk_count )
+
+    for i, angle in enumerate(angles):
+        percent_list = [ float(x)/np.sum( np.array(count_list), axis=0 )[j]*100 for j, x in enumerate(count_list[i]) ]
+        ax = fig.add_subplot(241+i)
+        ax.set_title( str(angle-10) + '~' + str(angle+10) )
+        ax.bar(label_range, percent_list)
+        ax.set_xlim([0, len(bias_angle[0, :])+1])
+        ax.set_ylim([0, 100])
+    
+    plt.savefig( os.path.join( save_func_dir, 'epoch'+ str(epoch) )  )
+
+def Plot_Bias_Mid_Top1( bias_list, save_func_dir, epoch ):
+    bias_median = [ int(b.cpu().numpy()) for b in bias_list[0] ]
+    bias_ori = [ int(b.cpu().numpy()) for b in bias_list[1] ]
+    counter_list = [Counter(bias_median), Counter(bias_ori)]
+
+    for i in range(2):
+        elements = []
+        counts = []
+        counts_dict = collections.OrderedDict(sorted(counter_list[i].items()))
+        for elem, count in counts_dict.items():
+            elements.append( elem )
+            counts.append( count )
+
+        counts = [ float( sum(counts[:j+1]))  / sum(counts) * 100 for j, count in enumerate(counts) ]
+
+        plt.title( 'Bias_CDF, { blue:origin, red:median }' )
+        plt.ylabel( '%', fontsize=10 )
+        plt.xlabel( 'Angle', fontsize=10 )
+        if i == 0:
+            plt.plot( elements, counts, 'r-' )
+        else:
+            plt.plot( elements, counts, 'b-' )
+    plt.savefig( os.path.join( save_func_dir, 'epoch'+ str( epoch ) )  )
+    plt.close()
+    
+    
+    # fig = plt.figure(figsize=(10,10))
+    # fig.supxlabel('angle' )
+    # fig.supylabel('%')
+    
+    # for i in range(2):
+    #     elements = []
+    #     counts = []
+    #     for elem, count in counter_list[i].items():
+    #         elements.append( elem )
+    #         counts.append( count )
+    #     counts = [ float(count) / sum(counts) * 100 for count in counts ]
+        
+    #     ax = fig.add_subplot( 211+i )
+    #     ax.set_title( 'median filter bias' if i == 0 else 'original bias' )
+    #     ax.bar( elements, counts )
+    #     ax.set_xlim([0, 180])
+    #     ax.set_ylim([0, 100])
+    # plt.savefig( os.path.join( save_func_dir, 'epoch'+ str( epoch ) )  )
 
 def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
     layer = ['51']
@@ -768,7 +852,11 @@ def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
         Plot_Gt_Location( preds, save_func_dir, epoch )
     elif func_name == 'gaussian':
         Plot_Guassian( preds, targets,save_func_dir, epoch )
-    elif func_name == 'value_difference':
-        Plot_Value_Different( preds, save_func_dir, epoch )
     elif func_name == 'topk_cdf':
         Plot_Topk_CDF( preds, save_func_dir, epoch )
+    elif func_name == 'bias_topk':
+        Plot_Bias_Topk( preds, save_func_dir, epoch )
+    elif func_name == 'bias_mid_top1':
+        Plot_Bias_Mid_Top1( bias_list=preds, save_func_dir=save_func_dir, epoch=epoch )
+    # elif func_name == 'value_difference':
+    #     Plot_Value_Different( preds, save_func_dir, epoch )

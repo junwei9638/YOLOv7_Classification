@@ -1077,6 +1077,7 @@ class Classify(nn.Module):
         
         # x = self.sigmoid(  self.bn( self.conv(x) )  ) 
         x = self.conv(x)
+        # x = self.tan(x)
         x = self.linear( self.drop( self.pool( x ).flatten(1) ) ) 
         return x 
         

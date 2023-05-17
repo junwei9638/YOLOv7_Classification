@@ -54,7 +54,7 @@ from utils.general import (DATASETS_DIR, LOGGER, WorkingDirectory, check_git_sta
 from utils.loggers import GenericLogger
 from utils.plots import imshow_cls, Plot_What_U_Want
 from utils.torch_utils import (ModelEMA, model_info, select_device, smart_DDP,
-                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first, crossEntropy_CSL )
+                               smart_optimizer, smartCrossEntropyLoss, torch_distributed_zero_first, smartCrossEntropy_CSL )
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -273,8 +273,12 @@ def train(opt, device):
     t0 = time.time()
     
     # REVIEW: change to Focal loss
-    criterion = smartCrossEntropyLoss(label_smoothing=opt.label_smoothing)  # loss function
-    # criterion = crossEntropy_CSL( label_processing='csl', save_dir=save_dir, device=device )
+    if opt.csl == 0:
+        LOGGER.info( f"{colorstr('Loss Function: ')} smartCrossEntropy" )
+        criterion = smartCrossEntropyLoss( label_smoothing=opt.label_smoothing )  # loss function
+    else:
+        LOGGER.info( f"{colorstr('Loss Function: ')} CSL with CrossEntropy" )
+        criterion = smartCrossEntropy_CSL( sigma=opt.csl,  save_dir=save_dir, device=device )
     # criterion = hub.load( 'adeelh/pytorch-multi-class-focal-loss', model='focal_loss', alpha=None, gamma=2, device=device, reduction='mean', force_reload=False )
 
     best_fitness = 0.0
@@ -354,15 +358,15 @@ def train(opt, device):
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss, wrong_preds, targets, topk, bias_preds, gt_loc, wrong_values, correct = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds, targets, topk, gt_loc, correct, bias_topk, bias_list = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
                                                      nc=nc,
                                                      angle_threshold=opt.thresh,
-                                                     gaussian=opt.gaussian,
                                                      save_dir=save_dir, 
-                                                     epoch=epoch
+                                                     epoch=epoch,
+                                                     median=opt.median
                                                      )  # test accuracy, loss
                     
                     # REVIEW: 3 layer
@@ -379,13 +383,15 @@ def train(opt, device):
         val_batch_pred = ema.ema(val_batch_images.to(device))
         # REVIEW: 3 layer
         # val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
-        Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
+        # Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
         Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
-        Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
-        Plot_What_U_Want( func_name='ang_bias_dis', save_dir=save_dir, epoch=epoch, preds=bias_preds)
-        Plot_What_U_Want( func_name='gt_loc', save_dir=save_dir, epoch=epoch, preds=gt_loc)
-        Plot_What_U_Want( func_name='value_difference', save_dir=save_dir, epoch=epoch, preds=wrong_values )
+        # Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
+        # Plot_What_U_Want( func_name='ang_bias_dis', save_dir=save_dir, epoch=epoch, preds=bias_preds)
+        # Plot_What_U_Want( func_name='gt_loc', save_dir=save_dir, epoch=epoch, preds=gt_loc)
         Plot_What_U_Want( func_name='topk_cdf', save_dir=save_dir, epoch=epoch, preds=correct )
+        # Plot_What_U_Want( func_name='bias_topk', save_dir=save_dir, epoch=epoch, preds=bias )
+        Plot_What_U_Want( func_name='bias_mid_top1', save_dir=save_dir, epoch=epoch, preds=bias_list )
+        # Plot_What_U_Want( func_name='value_difference', save_dir=save_dir, epoch=epoch, preds=wrong_values )
         # Plot_What_U_Want( func_name='gaussian', save_dir=save_dir, epoch=epoch, preds=preds, targets=preds_before_gaussian)
         # Log metrics
         if RANK in {-1, 0}:
@@ -515,8 +521,9 @@ def parse_opt(known=False):
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--overwrite', action='store_true', default=False,help='overwrite the project')
     parser.add_argument('--thresh', type=int, default=0, help='angle threshold')
-    parser.add_argument('--gaussian', nargs='+', type=int, default=(11,5), help='kernel_size, sigma')
+    parser.add_argument('--csl', type=int, default=0, help='csl sigma')
     parser.add_argument('--freeze', nargs='+', type=int, default=[0], help='Freeze layers: backbone=10, first3=0 1 2')
+    parser.add_argument('--median', action='store_true', help='median filter')
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
@@ -531,10 +538,11 @@ def main(opt):
     if opt.overwrite:
         overwrite_path = os.path.join( os.getcwd(),'runs','train-cls', opt.name )
         if os.path.exists( overwrite_path ) :
-            LOGGER.info( f'Overwrite Path: {opt.name}')
+            LOGGER.info( f"{colorstr('Overwrite Path: ')}{opt.name}" )
+
             shutil.rmtree( overwrite_path )
         else : 
-            LOGGER.info( 'NO DIRECTORY TO OVERWRITE !!')
+            LOGGER.info( f"{colorstr('NO DIRECTORY TO OVERWRITE !!')}" )
 
     # TODO: add Resume to classify 
     # Resume (from specified or most recent last.pt)

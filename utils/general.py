@@ -36,8 +36,9 @@ import torch
 import torchvision
 import yaml
 import ckwrap
+from collections import Counter
 from scipy import stats
-
+from scipy.ndimage import median_filter
 from utils import TryExcept, emojis
 from utils.downloads import gsutil_getsize
 from utils.metrics import box_iou, fitness
@@ -1174,6 +1175,86 @@ def ZScoreFilter( all_preds, devices ):
         print('all: ', all_preds[i], i )
         print( '-------------------------------')'''
     return torch.Tensor(all_preds).to(devices)
+
+def MedianFilterForXY( preds, targets, device  ):
+    print( '-----MedianFilterForXY------')
+    for i, target in enumerate( targets ):
+        xy_array = []
+        for j, pred in enumerate( preds[i] ):
+            pred = pred.cpu().numpy()
+            x =  math.cos( math.radians( pred ) )
+            y =  math.sin( math.radians( pred ) ) 
+            xy_array.append( [x,y] )
+        
+        
+        xy_array = np.array(xy_array)
+        print( 'ori_preds: ', xy_array )
+        output_array = median_filter( xy_array, size=(5, 1) )
+        print( 'aft_preds: ', output_array )
+        angle_array = np.arctan2(output_array[:, 1], output_array[:, 0]) * 180 / np.pi
+        angle_array = np.array( [ int(360 + x) if x < 0 else int(x) for x in angle_array ])
+        # minus_array = abs(angle_array - preds[i, 0].cpu().numpy()) 
+        # preds[i, 0] = angle_array.tolist()[np.argmin( minus_array )]
+        preds[i] = torch.from_numpy(angle_array).to(device)
+        # print( 'angle_array: ', angle_array )
+        # print( 'minus_array: ', minus_array )
+        # print( 'after_preds: ', preds[i] )
+        print( '----------------------' )    
+    return preds
+
+def MedianFilterFilterForXYTop5( preds, targets, device  ):
+    print( '-----MedianFilterForXY------')
+    mid_angle_bias = []
+
+    for i, target in enumerate( targets ):
+        xy_array = []
+        for j, pred in enumerate( preds[i, :5] ):
+            pred = pred.cpu().numpy()
+            x =  math.cos( math.radians( pred ) )
+            y =  math.sin( math.radians( pred ) ) 
+            xy_array.append( [x,y] )
+        
+        # print( preds[i] )
+        
+        xy_array = np.array(xy_array)
+        # print( 'ori_preds: ', xy_array )
+        mid = np.median( xy_array, axis=0 )
+        # print( 'aft_median: ', mid )
+        mid_angle = np.arctan2(mid[1], mid[0]) * 180 / np.pi
+        # print( 'after_median:', mid_angle )
+        mid_angle = int(360 + mid_angle) if mid_angle < 0 else int(mid_angle)
+        # print( 'after_median:', mid_angle )
+        # print( 'ori_angle: ', preds[i, 0] )
+        # print( 'target:', target )
+        bias = abs( mid_angle-target )
+        mid_angle_bias.append( bias if bias <= 180 else 360-bias )
+        # preds[i, 0] = mid_angle
+        # minus_array = abs(angle_array - preds[i, 0].cpu().numpy()) 
+        # preds[i, 0] = angle_array.tolist()[np.argmin( minus_array )]
+        # print( 'angle_array: ', angle_array )
+        # print( 'minus_array: ', minus_array )
+        # print( 'after_preds: ', preds[i] )
+        # print( preds[i] )
+        # print( '----------------------' )    
+    return mid_angle_bias
+
+def PredsPostProcess( all_preds ):
+
+    for i, preds in enumerate( all_preds ) :
+        preds_copy = preds.clone()
+        
+        for j, pred in enumerate(preds):
+            if j-2 < 0:
+                pred = torch.sum( torch.cat( (preds[360-2+j:],preds[:j+3]), -1) )
+            elif j+2 > 359:
+                pred = torch.sum( torch.cat( (preds[j-2:],preds[:j+2-359]), -1) )
+            else:
+                pred = torch.sum( preds[j-2:j+3] )
+            preds_copy[j] = pred
+        
+        all_preds[i] = preds_copy
+
+    return all_preds 
 
 
 # OpenCV Chinese-friendly functions ------------------------------------------------------------------------------------

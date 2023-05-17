@@ -99,31 +99,27 @@ def gaussian_label_csl( targets, num_class, u=0, sig=4.0, save_dir=None ):
     
     return csl_labels
 
-class crossEntropy_CSL(nn.Module):
-    def __init__(self, label_processing=None, num_class=360, save_dir=None, device=None):
+class smartCrossEntropy_CSL(nn.Module):
+    def __init__(self,  num_class=360, sigma=0, save_dir=None, device=None):
         super().__init__()
-        self.label_processing = label_processing
         self.num_class = num_class
         self.save_dir = save_dir
         self.device = device
-
+        self.sigma = sigma
+        
     def forward(self, preds, targets):
 
-        if self.label_processing == 'csl':
-            targets = gaussian_label_csl( targets, self.num_class, u=0, sig=4.0, save_dir=self.save_dir )
-            loss = F.cross_entropy(preds, targets)
-        
-        else:
-            # standard cross entropy loss
-            loss = F.cross_entropy(preds, targets)
-
+        targets = gaussian_label_csl( targets, self.num_class, u=0, sig=self.sigma, save_dir=self.save_dir )
+        loss = F.cross_entropy(preds, targets)
         return loss.mean()
+
 
 def smartCrossEntropyLoss(label_smoothing=0.0):
     # Returns nn.CrossEntropyLoss with label smoothing enabled for torch>=1.10.0
     if check_version(torch.__version__, '1.10.0'):
         return nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     if label_smoothing > 0:
+        LOGGER.info( 'labellllllllllllllllllllllll')
         LOGGER.warning(f'WARNING ⚠️ label smoothing {label_smoothing} requires torch>=1.10.0')
     return nn.CrossEntropyLoss()
 

@@ -27,7 +27,7 @@ from pathlib import Path
 
 import torch
 from tqdm import tqdm
-from utils.general import MedianFilter, ZScoreFilter, MedianFilter120
+from utils.general import MedianFilter, ZScoreFilter, MedianFilter120, MedianFilterForXY, MedianFilterFilterForXYTop5, PredsPostProcess
 from utils.plots import Plot_What_U_Want
 
 FILE = Path(__file__).resolve()
@@ -43,41 +43,39 @@ from utils.torch_utils import select_device, smart_inference_mode, gaussian_filt
 
 def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_process=False, device=None):
     wrong_preds = []
-    wrong_values = []
-    bias_preds = []
+    bias_ori = []
     gt_loc = []
     
+    if post_process:
+        bias_median = MedianFilterFilterForXYTop5( pred, targets, device )
+
     # REVIEW: get the wrong pred samples and bias_pred
-    bias = pred.clone()
+    bias_topk = pred.clone()
     
     for i, target in enumerate(targets):
-        bias[i] = abs( bias[i] - target )
-        
-        if bias[i][0] > threshold :
-            wrong_preds.append( [pred[i][0], target] )
-            if torch.any( pred[i][:] == target ):
-                wrong_values.append( [ target, value[i][0], value[i][torch.where( pred[i][:] == target )]] )
+        bias_topk[i] = abs( bias_topk[i]-target )
+        bias_topk[i] = torch.where( bias_topk[i]<=180, bias_topk[i], 360-bias_topk[i] )
+        if bias_topk[i, 0] > threshold :
+            wrong_preds.append( [pred[i, 0], target] )
+            # if torch.any( pred[i][:] == target ):
+            #     wrong_values.append( [ target, value[i][0], value[i][torch.where( pred[i][:] == target )]] )
         # if pred[i][0] != target :
         #     wrong_preds.append( [pred[i][0].clone(), target])
         
-        bias_preds.append( bias[i][0] )
+        bias_ori.append( bias_topk[i, 0] )
         
     #REVIEW: get bias of top15 and location of top1
-        if torch.any( bias[i] <= threshold ):
-            gt_loc.append( torch.where( bias[i] <= threshold )[0][0] )
+        # if torch.any( bias[i] <= threshold ):
+        #     gt_loc.append( torch.where( bias[i] <= threshold )[0][0] )
     
-    
-    if post_process:
-        pred = MedianFilter( pred, device )
-    # pred = ZScoreFilter( pred.cpu().numpy(), device )
 
-    # REVIEW: add threshhold of angle
-    correct = torch.where( bias <= threshold, torch.tensor(1), torch.tensor(0) ).float()
+    # REVIEW: add threshold of angle
+    correct = torch.where( bias_topk <= threshold, torch.tensor(1), torch.tensor(0) ).float()
     # correct = (targets[:, None] == pred).float()
     
     acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
     top1, top5 = acc.mean(0).tolist()
-    return top1, top5, wrong_preds, bias_preds, gt_loc, wrong_values, correct
+    return top1, top5, wrong_preds, gt_loc, correct, bias_topk, [bias_median, bias_ori]
 
 def Guas_Compare( y, y_gau):
     # print( y[:, 0], y_gau[:, 0])
@@ -106,7 +104,8 @@ def run(
     angle_threshold=5,
     gaussian = None,
     save_dir = None,
-    epoch = None
+    epoch = None,
+    median = False
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -163,7 +162,7 @@ def run(
             with dt[1]:
                 
                 y = model( images ) 
-                
+                y = PredsPostProcess( y )
                 #REVIEW: gaussian
                 # y_before_gau = y.clone()
                 # y = gaussian_filter_1d( y, kernel_size=int(gaussian[0]), sigma=int(gaussian[1]), save_dir=save_dir, device=device)
@@ -208,7 +207,7 @@ def run(
     # wrong_preds = [result24[2], result37[2], result51[2]]
     
     pred, targets, value =  torch.cat(pred), torch.cat(targets), torch.cat(value)
-    top1, top5, wrong_preds, bias_preds, gt_loc, wrong_values, correct = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value,angle_threshold)
+    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
     loss /= n
     
     # REVIEW: 3 layers
@@ -243,7 +242,7 @@ def run(
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
     
-    return top1, top5, loss, wrong_preds, targets, pred, bias_preds, gt_loc, wrong_values, correct
+    return top1, top5, loss, wrong_preds, targets, pred, gt_loc, correct, bias_topk, bias_list
 
 
 def parse_opt():
