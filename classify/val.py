@@ -24,7 +24,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-
+import numpy as np
 import torch
 from tqdm import tqdm
 from utils.general import MedianFilter, ZScoreFilter, MedianFilter120, MedianFilterForXY, MedianFilterFilterForXYTop5, PredsPostProcess
@@ -45,6 +45,8 @@ def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_proc
     wrong_preds = []
     bias_ori = []
     gt_loc = []
+    topk_list = []
+    bias_median = None
     
     if post_process:
         bias_median = MedianFilterFilterForXYTop5( pred, targets, device )
@@ -75,7 +77,13 @@ def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_proc
     
     acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
     top1, top5 = acc.mean(0).tolist()
-    return top1, top5, wrong_preds, gt_loc, correct, bias_topk, [bias_median, bias_ori]
+    
+    for i in range(threshold+1):
+        correct = torch.where( bias_topk <= i, torch.tensor(1), torch.tensor(0) ).float()
+        acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
+        topk_list.append( acc.mean(0).tolist() )
+    
+    return top1, top5, wrong_preds, gt_loc, correct, bias_topk, [bias_median, bias_ori], topk_list
 
 def Guas_Compare( y, y_gau):
     # print( y[:, 0], y_gau[:, 0])
@@ -144,7 +152,7 @@ def run(
                                                       workers=workers)
 
     model.eval()
-    pred, pred24, pred37, pred51, value, targets, loss, dt = [], [], [], [], [], [], 0, (Profile(), Profile(), Profile())
+    pred, y_total, y_total_post, image_list, value, targets, loss, dt = [], [], [], [], [], [], 0, (Profile(), Profile(), Profile())
     loss24, loss37, loss51, gau_count = 0, 0, 0, 0
     n = len(dataloader)  # number of batches
     
@@ -162,7 +170,9 @@ def run(
             with dt[1]:
                 
                 y = model( images ) 
-                y = PredsPostProcess( y )
+                # y_before_gau = y.clone()
+                # y = gaussian_filter_1d( y, kernel_size=5, sigma=5, save_dir=save_dir, device=device)
+                y_postproc = PredsPostProcess( y.clone() )
                 #REVIEW: gaussian
                 # y_before_gau = y.clone()
                 # y = gaussian_filter_1d( y, kernel_size=int(gaussian[0]), sigma=int(gaussian[1]), save_dir=save_dir, device=device)
@@ -179,9 +189,17 @@ def run(
                 # pred37.append(y37.argsort(1, descending=True)[:, :15])
                 # pred51.append(y51.argsort(1, descending=True)[:, :15])
                 # y = ( y24 + y37 + y51 ) / 3 
-                
+                y_total.append( y )
+                image_list.append( images )
+                y_total_post.append( y_postproc )
                 pred.append( y.argsort(1, descending=True)[:, :15] )
                 value.append( y.sort( 1, descending=True)[0][:, :15] )
+                # for i in range(len(labels) ): 
+                #     print( '-------------------------' )
+                #     print( 'target: ', labels[i] )
+                #     print( 'pred: ', y )
+                #     print( 'value: ', y.sort( 1, descending=True)[0][:, :15][i] )
+                #     print( '-------------------------' )
                 targets.append(labels)
                 
                 if criterion:
@@ -205,18 +223,18 @@ def run(
     # top1 = [result24[0], result37[0], result51[0]]
     # top5 = [result24[1], result37[1], result51[1]]
     # wrong_preds = [result24[2], result37[2], result51[2]]
-    
-    pred, targets, value =  torch.cat(pred), torch.cat(targets), torch.cat(value)
-    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
+    pred, targets, value, y_total, y_total_post, image_list =  torch.cat(pred), torch.cat(targets), torch.cat(value), torch.cat(y_total), torch.cat(y_total_post), torch.cat(image_list)
+    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list, topk_list = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
     loss /= n
     
     # REVIEW: 3 layers
     # loss24 /= n
     # loss37 /= n
     # loss51 /= n
-
+    
+    Plot_What_U_Want( func_name='topk_threshold', save_dir=save_dir, epoch=epoch, preds=topk_list )
+    
     if pbar:
-        
         # REVIEW: 3 layer
         # pbar.desc = f"{pbar.desc[:-36]}{loss:>12.3g}{top1[-1]:>12.3g}{top5[-1]:>12.3g}"
         
@@ -242,7 +260,7 @@ def run(
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
     
-    return top1, top5, loss, wrong_preds, targets, pred, gt_loc, correct, bias_topk, bias_list
+    return top1, top5, loss, wrong_preds, targets, pred, gt_loc, correct, bias_topk, bias_list, y_total, y_total_post, image_list
 
 
 def parse_opt():

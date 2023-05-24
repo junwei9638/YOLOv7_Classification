@@ -1232,6 +1232,40 @@ class ClassificationDatasetFromTxt(Dataset):
         self.dataSize = len(samples)
         return samples
     
+    def del_blue_channel_add_sobel( self, img ):
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        grad_x = cv2.Sobel(img_gray , cv2.CV_16S, 1, 0, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+        grad_y = cv2.Sobel(img_gray , cv2.CV_16S, 0, 1, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+        abs_grad_x = cv2.convertScaleAbs(grad_x)
+        abs_grad_y = cv2.convertScaleAbs(grad_y)
+        grad = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
+        b, g, r = cv2.split(img)
+        b = grad
+        img = cv2.merge((b, g, r))
+        return img
+    
+    def huff_convert(self, img ):
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray,50,150,apertureSize = 3)
+        lines = cv2.HoughLines(edges,1,np.pi/180,200)
+        
+        for line in lines:
+            rho = line[0][0]  #第一个元素是距离rho
+            theta= line[0][1] #第二个元素是角度theta
+            print (rho)
+            print (theta)
+            if  (theta < (np.pi/4. )) or (theta > (3.*np.pi/4.0)): #垂直直线
+                pt1 = (int(rho/np.cos(theta)),0)               #该直线与第一行的交点
+                #该直线与最后一行的焦点
+                pt2 = (int((rho-img.shape[0]*np.sin(theta))/np.cos(theta)),img.shape[0])
+                cv2.line( img, pt1, pt2, (255))             # 绘制一条白线
+            else:                                                  #水平直线
+                pt1 = (0,int(rho/np.sin(theta)))               # 该直线与第一列的交点
+                #该直线与最后一列的交点
+                pt2 = (img.shape[1], int((rho-img.shape[1]*np.cos(theta))/np.sin(theta)))
+                cv2.line(img, pt1, pt2, (255), 1)    
+        return img
+    
     def readImg( self, file, pos ):
         img = cv2.imread( file )
         height = img.shape[0]
@@ -1240,22 +1274,24 @@ class ClassificationDatasetFromTxt(Dataset):
         y = float(pos[1]) * height
         w = float(pos[2]) * width
         h = float(pos[3]) * height
-        # The anchor is twice bigger than the original
-        # xmin = int( x - w ) if int( x - w ) > 0 else 0
-        # xmax = int( x + w ) if int( x + w ) < width else width
-        # ymin = int( y - h ) if int( y - h ) > 0 else 0
-        # ymax = int( y + h ) if int( y + h ) < height else height
         
-        xmin = int( x - w/2  )
-        xmax = int( x + w/2  )
-        ymin = int( y - h/2  )
-        ymax = int( y + h/2  )
-        
-        xmin = 0 if xmin < 0 else xmin
-        ymin = 0 if ymin < 0 else ymin
+        xmin = int( x - w/2  ) if int( x - w/2 ) > 0 else 0
+        xmax = int( x + w/2  ) if int( x + w/2 ) < width else width
+        ymin = int( y - h/2  ) if int( y - h/2 ) > 0 else 0
+        ymax = int( y + h/2  ) if int( y + h/2 ) < height else height
 
+        longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
+        
+        xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
+        xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
+        ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
+        ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
+        
+        # img = self.del_blue_channel_add_sobel( img )
+        img = self.huff_convert( img )
         img = img[ymin:ymax, xmin:xmax ]
         return img, [ymin, ymax, xmin, xmax ]
+
     
     def rotate_with_background(self, img, angle, bg_color=(128, 128, 128)):
 
@@ -1301,10 +1337,12 @@ class ClassificationDatasetFromTxt(Dataset):
                 label -= 360
             elif label < 0 :
                 label = 360 + label
+        
         try:
             sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
         except:
             print( f, impos, pos )
+            print( im.shape )
             
 
         # sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]

@@ -358,7 +358,7 @@ def train(opt, device):
 
                 # Test
                 if i == len(pbar) - 1:  # last batch
-                    top1, top5, vloss, wrong_preds, targets, topk, gt_loc, correct, bias_topk, bias_list = validate.run(model=ema.ema,
+                    top1, top5, vloss, wrong_preds, targets, topk, gt_loc, correct, bias_topk, bias_list, y_total, ytotal_post, image_list = validate.run(model=ema.ema,
                                                      dataloader=valloader,
                                                      criterion=criterion,
                                                      pbar=pbar,
@@ -379,8 +379,15 @@ def train(opt, device):
         
 
         # REVIEW: plot distribution after val
-        val_batch_images, val_batch_labels = next(iter(valloader))
-        val_batch_pred = ema.ema(val_batch_images.to(device))
+        img_list, label_list, pred_list = [], [], []
+        
+        # for i, (val_batch_images, val_batch_labels) in enumerate( next(iter(valloader)) ) :
+        #     val_batch_pred = ema.ema(val_batch_images.to(device))
+        #     img_list.append( val_batch_images )
+        #     label_list.append( val_batch_labels )
+        #     pred_list.append( val_batch_pred  )
+        
+        # img_list, label_list, pred_list = torch.cat(img_list), torch.cat(label_list), torch.cat(pred_list)
         # REVIEW: 3 layer
         # val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
         # Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
@@ -391,6 +398,7 @@ def train(opt, device):
         Plot_What_U_Want( func_name='topk_cdf', save_dir=save_dir, epoch=epoch, preds=correct )
         # Plot_What_U_Want( func_name='bias_topk', save_dir=save_dir, epoch=epoch, preds=bias )
         Plot_What_U_Want( func_name='bias_mid_top1', save_dir=save_dir, epoch=epoch, preds=bias_list )
+        Plot_What_U_Want( func_name='prob_dis_bias', save_dir=save_dir, epoch=epoch, preds=[y_total, ytotal_post, image_list], targets=targets)
         # Plot_What_U_Want( func_name='value_difference', save_dir=save_dir, epoch=epoch, preds=wrong_values )
         # Plot_What_U_Want( func_name='gaussian', save_dir=save_dir, epoch=epoch, preds=preds, targets=preds_before_gaussian)
         # Log metrics

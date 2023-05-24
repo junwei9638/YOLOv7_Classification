@@ -468,11 +468,15 @@ def imshow_cls(im, labels=None, pred=None, test_cls=None, names=None, nmax=25, v
             labels = np.array( labels )
             
             # REVIEW: cahnge test_images output 
-            if test_cls is not None:
+            if test_cls and pred is not None:
                 s =  "gt:" + test_cls[labels[i]] + (f', pred:{names[pred.tolist()[i]]}' if pred is not None else '')
+            
+            elif pred is not None:
+                s =  "gt: " + str(labels[i]) + ' pred: ' + str(pred[i])
             else:
                 #print( names,labels[i] )
                 s =  "gt:" + names[labels[i]]
+                
             ax[i].set_title(s, fontsize=8, verticalalignment='top')
     plt.savefig(f, dpi=300, bbox_inches='tight')
     plt.close()
@@ -612,6 +616,7 @@ def WriteReport(target, pred, save_dir, classes, mode):
             f.write( "\n" )
             
 def Plot_Prob_Distribution( pred_prob, gt_label, path, epoch) :
+    plt.figure(figsize=(12,12))
     for i in range(1, 5):
         pred = pred_prob[i][:].tolist()
         label = gt_label[i].tolist()
@@ -622,11 +627,89 @@ def Plot_Prob_Distribution( pred_prob, gt_label, path, epoch) :
         plt.bar( label, bar_length, bottom=min( pred ), color='blue', width=4 )
         plt.ylabel('Value', fontsize=10)
         plt.xlabel('Angle', fontsize=10)
-        plt.title('gt: '+ str(label), fontsize=10)
-        plt.subplots_adjust(wspace=0.5, hspace=0.5)
+        plt.title('gt: '+ str(label) + ' pred: ' + str(pred.index(max(pred))), fontsize=10)
+        plt.subplots_adjust(left=0.125,
+                    bottom=0.1, 
+                    right=0.9, 
+                    top=0.9, 
+                    wspace=0.2, 
+                    hspace=0.35)
         plt.plot( label_range, pred, 'r-')
     plt.savefig( os.path.join( path, ( 'prob_dis_epoch' + str(epoch) ) ) )
     plt.close()
+
+def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
+    preds = pred_prob[0].tolist()
+    preds_post = pred_prob[1].tolist()
+    img_list = pred_prob[2]
+    labels = gt_label.tolist()
+    biases = []
+    imshow_img , imshow_label, imshow_pred = [], [], []
+    
+    for i, label in enumerate( labels ):
+        minus = abs(np.argmax(preds_post[i])-label)
+        if minus > 180:
+            minus = 360 - minus
+        if minus > 50 :
+            biases.append( [preds[i], label, preds_post[i]] )
+            imshow_img.append( img_list[i].unsqueeze(0) )
+            imshow_label.append( label )
+            imshow_pred.append( preds_post[i].index(max(preds_post[i])) )
+    plt.figure(figsize=(12,12))
+    
+    for i, bias in enumerate( biases[:12] ) :
+        label_range = np.arange(0, 360)
+        plt.figure(figsize=(12,12))
+        plt.subplot( 2, 1, 1 )
+        plt.plot(   bias[1], max(bias[0]), 'b.' )
+        plt.ylabel('Value', fontsize=10)
+        plt.xlabel('Angle', fontsize=10)
+        plt.title('gt(blue dot): '+ str(bias[1]) + '    pred: ' + str(bias[0].index(max(bias[0]))), fontsize=10)
+        plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
+        plt.plot( label_range, bias[0], 'r-')
+        
+        plt.subplot( 2, 1, 2 )
+        plt.plot(   bias[1], max(bias[2]), 'b.' )
+        plt.ylabel('Value', fontsize=10)
+        plt.xlabel('Angle', fontsize=10)
+        plt.title('5 sum -- gt(blue dot): '+ str(bias[1]) + '    pred: ' + str(bias[2].index(max(bias[2]))), fontsize=10)
+        plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
+        plt.plot( label_range, bias[2], 'r-')
+        plt.savefig( os.path.join( path, ( 'ep' + str(epoch) + '_' + str(i) ) ) )
+        plt.close()
+        
+    imshow_cls( torch.cat(imshow_img)[:12], imshow_label[:12], pred=imshow_pred[:12], f=os.path.join( path, ( 'ep' + str(epoch) + '_bias_img' ) ) )
+        
+# def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
+#     preds = pred_prob[0].tolist()
+#     preds_post = pred_prob[1].tolist()
+#     labels = gt_label.tolist()
+#     biases = []
+#     for i, label in enumerate( labels ):
+#         minus = abs(np.argmax(preds[i])-label)
+#         if minus > 180:
+#             minus = 360 - minus
+#         if minus > 50 :
+#             biases.append( [preds[i], label, preds_post[i]] )
+    
+#     plt.figure(figsize=(12,12))
+#     for i, bias in enumerate( biases ) :
+#         unplt = True
+#         label_range = np.arange(0, 360)
+#         AZ
+#         plt.subplot( 1, 2, 1 )
+#         plt.plot(   bias[1], max(bias[0]), 'b.' )
+#         plt.ylabel('Value', fontsize=10)
+#         plt.xlabel('Angle', fontsize=10)
+#         plt.title('gt(blue dot): '+ str(bias[1]) + '    pred: ' + str(bias[0].index(max(bias[0]))), fontsize=10)
+#         plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
+#         plt.plot( label_range, bias[0], 'r-')
+#         plt.savefig( os.path.join( path, ( 'ep' + str(epoch) + '_' + str(i) ) ) )
+#         plt.close()
+#         plt.figure(figsize=(12,12))
+#     if unplt:
+#         plt.savefig( os.path.join( path, ( 'ep' + str(epoch) + '_' + str(i) ) ) )
+#         plt.close()
 
 def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
     preds, targets = zip(*wrong_preds)
@@ -639,49 +722,8 @@ def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
     plt.savefig( os.path.join( path, ( 'wrong_preds_epoch' + str(epoch) ) ) )
     plt.close()
     
-def Plot_Topk_Distribution( topk, target, path, epoch) :
-    for i in range(1, 5):
-        pred = topk[i][:].tolist()
-        label = np.repeat( target[i].cpu().numpy(), 15 )
-        topk_range = np.arange(0, topk.size()[1])
-        plt.subplot( 2, 2, i )
-        plt.ylabel('Angle', fontsize=10)
-        plt.xlabel('Topk', fontsize=10)
-        plt.title('gt: '+ str(label[0]), fontsize=10)
-        plt.subplots_adjust(wspace=0.5, hspace=0.5)
-        plt.plot( topk_range, label, 'b-')
-        plt.plot( topk_range, pred, 'r.')
-        
-        for i, p in enumerate(pred):
-            if ( label[0] == p ) :
-                plt.plot( i, p, 'yo')
-                plt.title('gt: '+ str(label[0])+', top:'+ str(i), fontsize=10)
-                break
-    plt.savefig( os.path.join( path, ( 'topk_dis_epoch' + str(epoch) ) ) )
-    plt.close()
     
-def Plot_Angle_Bias_Distribution( preds, path, epoch ) :
-    preds = [int(pred.cpu().numpy()) for pred in preds] 
-    elements = ['315-45', '45-135', '135-225', '225-315']
-    counts = [0, 0, 0, 0]
-    for pred in preds:
-        if pred >= 315 or pred < 45 :
-            counts[0] += 1 
-        elif pred >= 45 and pred < 135:
-            counts[1] += 1 
-        elif pred >= 135 and pred < 225:
-            counts[2] += 1 
-        elif pred >= 225 and pred < 315:
-            counts[3] += 1 
-    counts = [ float(x) / len(preds) * 100 for x in counts ]
-    plt.title('Angle Bias Distribution', fontsize=20)
-    plt.ylabel( '%', fontsize=10 )
-    plt.xlabel( 'Bias', fontsize=10 )
-    plt.bar( elements,counts )
-    plt.savefig( os.path.join( path, ( 'angle_bias_epoch' + str(epoch) ) ) )
-    plt.close()
-    
-def Plot_Gt_Location( preds, path, epoch ) :
+def Plot_Gt_In_Topk( preds, path, epoch ) :
     preds = [int(pred.cpu().numpy()) for pred in preds] 
     counted_list = Counter(preds)
     elements = []
@@ -714,7 +756,7 @@ def Plot_Guassian( preds, targets, path, epoch ):
     plt.savefig( os.path.join( path, ( 'gaussian_epoch' + str(epoch) ) ) )
     plt.close()
     
-def Plot_Value_Different( wrong_values, save_func_dir, epoch ):
+def Plot_Value_Different_Between_GTandPreds( wrong_values, save_func_dir, epoch ):
     targets, pred_values, target_values = [], [], []
     for value in wrong_values:
         targets.append( value[0].cpu().numpy() )
@@ -749,7 +791,7 @@ def Plot_Topk_CDF( corrects, save_func_dir, epoch ):
     plt.savefig( os.path.join( save_func_dir, ( 'topk_CDF_epoch' + str(epoch) ) ) )
     plt.close()
     
-def Plot_Bias_Topk( bias_angle, save_func_dir, epoch ):
+def Plot_Topk_Bias_Distribution( bias_angle, save_func_dir, epoch ):
     bias_angle = bias_angle.detach().cpu().numpy()
     fig = plt.figure(figsize=(12,12))
     fig.supxlabel('TopK' )
@@ -782,12 +824,15 @@ def Plot_Bias_Topk( bias_angle, save_func_dir, epoch ):
     
     plt.savefig( os.path.join( save_func_dir, 'epoch'+ str(epoch) )  )
 
-def Plot_Bias_Mid_Top1( bias_list, save_func_dir, epoch ):
-    bias_median = [ int(b.cpu().numpy()) for b in bias_list[0] ]
+def Plot_Bias_Top1_CDF( bias_list, save_func_dir, epoch ):
+    counter_list = []
+    if bias_list[0] != None:
+        bias_median = [ int(b.cpu().numpy()) for b in bias_list[0] ]
+        counter_list.append( Counter(bias_median) )
     bias_ori = [ int(b.cpu().numpy()) for b in bias_list[1] ]
-    counter_list = [Counter(bias_median), Counter(bias_ori)]
+    counter_list.append( Counter(bias_ori) )
 
-    for i in range(2):
+    for i in range(len(counter_list)):
         elements = []
         counts = []
         counts_dict = collections.OrderedDict(sorted(counter_list[i].items()))
@@ -827,6 +872,31 @@ def Plot_Bias_Mid_Top1( bias_list, save_func_dir, epoch ):
     #     ax.set_ylim([0, 100])
     # plt.savefig( os.path.join( save_func_dir, 'epoch'+ str( epoch ) )  )
 
+def Plot_Topk_Threshold( topk_list, save_func_dir, epoch ):
+    label_range = np.arange(0, len(topk_list))
+    top1_list = np.array(topk_list)[:, 0]
+    top15_list = np.array(topk_list)[:, 1]
+    plt.figure(figsize=(12,12))
+    
+    ax = plt.subplot( 2, 1, 1 )
+    ax.set_ylim([0, 1])
+    plt.ylabel( 'Accuracy', fontsize=10 )
+    plt.xlabel( 'Bias', fontsize=10 )
+    plt.title( 'Top1', fontsize=10 )
+    plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
+    plt.plot( label_range, top1_list, 'r-')
+    
+    ax = plt.subplot( 2, 1, 2 )
+    ax.set_ylim([0, 1])
+    plt.ylabel( 'Accuracy', fontsize=10 )
+    plt.xlabel( 'Bias', fontsize=10 )
+    plt.title( 'Top15', fontsize=10 )
+    plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
+    plt.plot( label_range, top15_list, 'r-')
+   
+    plt.savefig( os.path.join( save_func_dir, ( 'ep' + str(epoch) ) ) ) 
+    plt.close()
+
 def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
     layer = ['51']
     save_func_dir = os.path.join( save_dir, func_name )
@@ -843,20 +913,19 @@ def Plot_What_U_Want( func_name, save_dir, epoch, preds=None, targets=None ):
     elif func_name == 'wrong_dis':
         # Plot_Wrong_Sample_Distribution( preds[i], layer_dir, epoch )
         Plot_Wrong_Sample_Distribution( preds, save_func_dir, epoch )
-    elif func_name == 'topk_dis':
-        # Plot_Topk_Distribution( preds[i], targets, layer_dir, epoch )
-        Plot_Topk_Distribution( preds, targets, save_func_dir, epoch )
-    elif func_name == 'ang_bias_dis':
-        Plot_Angle_Bias_Distribution( preds, save_func_dir, epoch )
     elif func_name == 'gt_loc':
-        Plot_Gt_Location( preds, save_func_dir, epoch )
+        Plot_Gt_In_Topk( preds, save_func_dir, epoch )
     elif func_name == 'gaussian':
         Plot_Guassian( preds, targets,save_func_dir, epoch )
     elif func_name == 'topk_cdf':
         Plot_Topk_CDF( preds, save_func_dir, epoch )
     elif func_name == 'bias_topk':
-        Plot_Bias_Topk( preds, save_func_dir, epoch )
+        Plot_Topk_Bias_Distribution( preds, save_func_dir, epoch )
     elif func_name == 'bias_mid_top1':
-        Plot_Bias_Mid_Top1( bias_list=preds, save_func_dir=save_func_dir, epoch=epoch )
+        Plot_Bias_Top1_CDF( bias_list=preds, save_func_dir=save_func_dir, epoch=epoch )
+    elif func_name == 'prob_dis_bias' :
+        Plot_Prob_Distribution_Large_Bias( preds, targets, save_func_dir, epoch )
+    elif func_name == 'topk_threshold' :
+        Plot_Topk_Threshold( preds, save_func_dir, epoch )
     # elif func_name == 'value_difference':
     #     Plot_Value_Different( preds, save_func_dir, epoch )
