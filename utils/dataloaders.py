@@ -1244,29 +1244,43 @@ class ClassificationDatasetFromTxt(Dataset):
         img = cv2.merge((b, g, r))
         return img
     
-    def huff_convert(self, img ):
-        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray,50,150,apertureSize = 3)
-        lines = cv2.HoughLines(edges,1,np.pi/180,200)
-        
-        for line in lines:
-            rho = line[0][0]  #第一个元素是距离rho
-            theta= line[0][1] #第二个元素是角度theta
-            print (rho)
-            print (theta)
-            if  (theta < (np.pi/4. )) or (theta > (3.*np.pi/4.0)): #垂直直线
-                pt1 = (int(rho/np.cos(theta)),0)               #该直线与第一行的交点
-                #该直线与最后一行的焦点
-                pt2 = (int((rho-img.shape[0]*np.sin(theta))/np.cos(theta)),img.shape[0])
-                cv2.line( img, pt1, pt2, (255))             # 绘制一条白线
-            else:                                                  #水平直线
-                pt1 = (0,int(rho/np.sin(theta)))               # 该直线与第一列的交点
-                #该直线与最后一列的交点
-                pt2 = (img.shape[1], int((rho-img.shape[1]*np.cos(theta))/np.sin(theta)))
-                cv2.line(img, pt1, pt2, (255), 1)    
-        return img
+    # def huff_convert(self, img, label ):
+    #     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    #     # edges = cv2.Canny(gray, 50, 200)
+    #     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    #     grad_x = cv2.Sobel(img_gray , cv2.CV_16S, 1, 0, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+    #     grad_y = cv2.Sobel(img_gray , cv2.CV_16S, 0, 1, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+    #     abs_grad_x = cv2.convertScaleAbs(grad_x)
+    #     abs_grad_y = cv2.convertScaleAbs(grad_y)
+    #     grad = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
+    #     lines = cv2.HoughLines(grad, 1, math.pi / 180.0, 120)
+
+    #     if lines is not None:
+    #         a, b, c = lines.shape
+    #         for i in range(a):
+    #             rho = lines[i][0][0]
+    #             theta = lines[i][0][1]
+    #             # print( theta )
+    #             angle = theta / math.pi * 180 + 90
+    #             label = label if label < 180 else 360 - label
+    #             # print( angle, label)
+    #             bias = abs(angle  - label) if abs(angle - label) < 90 else 180 - abs(angle  - label)
+    #             if bias <= 3 :
+    #                 a = math.cos(theta)
+    #                 b = math.sin(theta)
+    #                 x0, y0 = a * rho, b * rho
+    #                 pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
+    #                 pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
+    #                 cv2.line(img, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)
+    #             # a = math.cos(theta)
+    #             # b = math.sin(theta)
+    #             # x0, y0 = a * rho, b * rho
+    #             # pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
+    #             # pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
+    #             # cv2.line(img, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)    
+    #     return img
     
-    def readImg( self, file, pos ):
+    def readImg( self, file, pos, label ):
         img = cv2.imread( file )
         height = img.shape[0]
         width = img.shape[1]
@@ -1280,15 +1294,14 @@ class ClassificationDatasetFromTxt(Dataset):
         ymin = int( y - h/2  ) if int( y - h/2 ) > 0 else 0
         ymax = int( y + h/2  ) if int( y + h/2 ) < height else height
 
-        longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
+        # longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
         
-        xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
-        xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
-        ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
-        ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
+        # xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
+        # xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
+        # ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
+        # ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
         
         # img = self.del_blue_channel_add_sobel( img )
-        img = self.huff_convert( img )
         img = img[ymin:ymax, xmin:xmax ]
         return img, [ymin, ymax, xmin, xmax ]
 
@@ -1316,7 +1329,7 @@ class ClassificationDatasetFromTxt(Dataset):
                 np.save(fn.as_posix(), self.readImg( f, pos ))
             im = np.load(fn)
         else:  # read image
-            im, impos = self.readImg( f, pos )  # BGR
+            im, impos = self.readImg( f, pos, label )  # BGR
 
         assert im is not None, f'Image Not Found {f}'
         assert label is not None, f'Label Not Found {f}'

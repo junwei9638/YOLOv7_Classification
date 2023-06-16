@@ -1,5 +1,5 @@
-flipud: True
-fliplr: True
+flipud: False
+fliplr: False
 rotateAngle: [ ]
 # 0
 # rotateAngle: [ 30, 60, 120, 150, 210, 240, 270, 300, 330 ]
