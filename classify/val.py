@@ -27,8 +27,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from tqdm import tqdm
-from utils.general import MedianFilter, ZScoreFilter, MedianFilter120, MedianFilterForXY, MedianFilterFilterForXYTop5, PredsPostProcess
-from utils.plots import Plot_What_U_Want
+
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -38,9 +37,10 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import create_classification_dataloader
-from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args
+from utils.general import LOGGER, Profile, check_img_size, check_requirements, colorstr, increment_path, print_args, check_dataset
 from utils.torch_utils import select_device, smart_inference_mode, gaussian_filter_1d
-
+from utils.plots import Plot_What_U_Want
+from utils.general import MedianFilter, ZScoreFilter, MedianFilter120, MedianFilterForXY, MedianFilterFilterForXYTop5, PredsPostProcess
 def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_process=False, device=None):
     wrong_preds = []
     bias_ori = []
@@ -83,7 +83,7 @@ def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_proc
         acc = torch.stack((correct[:, 0], correct.max(1).values), dim=1)  # (top1, top5) accuracy
         topk_list.append( acc.mean(0).tolist() )
     
-    return top1, top5, wrong_preds, gt_loc, correct, bias_topk, [bias_median, bias_ori], topk_list
+    return top1, top5, wrong_preds, gt_loc, correct, bias_topk, [bias_median, bias_ori], topk_list, acc
 
 def Guas_Compare( y, y_gau):
     # print( y[:, 0], y_gau[:, 0])
@@ -116,6 +116,7 @@ def run(
     median = False
 ):
     # Initialize/load model and set device
+
     training = model is not None
     if training:  # called by train.py
         device, pt, jit, engine = next(model.parameters()).device, True, False, False  # get model device, PyTorch model
@@ -123,7 +124,10 @@ def run(
         model.half() if half else model.float()
     else:  # called directly
         device = select_device(device, batch_size=batch_size)
-
+        
+        # REVIEW: add check_dataset
+        data_dict = check_dataset(data)  # check if None
+        
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
         save_dir.mkdir(parents=True, exist_ok=True)  # make dir
@@ -142,12 +146,13 @@ def run(
                 LOGGER.info(f'Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models')
 
         # Dataloader
-        data = Path(data)
-        test_dir = data / 'test' if (data / 'test').exists() else data / 'val'  # data/test or data/val
-        dataloader = create_classification_dataloader(path=test_dir,
+        # data = Path(data)
+        # test_dir = data / 'test' if (data / 'test').exists() else data / 'val'  # data/test or data/val
+        dataloader = create_classification_dataloader(data_dict,
+                                                      mode='val',
                                                       imgsz=imgsz,
                                                       batch_size=batch_size,
-                                                      augment=False,
+                                                      augment=True,
                                                       rank=-1,
                                                       workers=workers)
 
@@ -224,7 +229,7 @@ def run(
     # top5 = [result24[1], result37[1], result51[1]]
     # wrong_preds = [result24[2], result37[2], result51[2]]
     pred, targets, value, y_total, y_total_post, image_list =  torch.cat(pred), torch.cat(targets), torch.cat(value), torch.cat(y_total), torch.cat(y_total_post), torch.cat(image_list)
-    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list, topk_list = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
+    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list, topk_list, acc = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
     loss /= n
     
     # REVIEW: 3 layers
@@ -259,7 +264,7 @@ def run(
     
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
-    
+    print( topk_list )
     return top1, top5, loss, wrong_preds, targets, pred, gt_loc, correct, bias_topk, bias_list, y_total, y_total_post, image_list
 
 

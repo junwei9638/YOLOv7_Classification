@@ -337,6 +337,148 @@ class LoadImages:
     def __len__(self):
         return self.nf  # number of files
 
+class LoadImagesForClassify:
+    # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
+    def __init__(self, path, img_size=640, stride=32, auto=True, transforms=None, vid_stride=1):
+        files = []
+        #REVIEW: read txt file
+        if path.endswith('txt'):
+            with open( path, 'r') as f:
+                img_files = f.readlines()
+            for img_file in img_files:
+                img_file = img_file[:-1]
+                txt_file = img_file[:-3] + 'txt'
+                with open( txt_file, 'r') as f:
+                    for line in f.readlines():
+                        angle = line.split(' ')[0]
+                        x = line.split(' ')[1]
+                        y = line.split(' ')[2]
+                        w = line.split(' ')[3]
+                        h = line.split(' ')[4]
+                        files.append([ img_file, angle, x, y, w, h])  
+        else:
+            for p in sorted(path) if isinstance(path, (list, tuple)) else [path]:
+                p = str(Path(p).resolve())
+                if '*' in p:
+                    files.extend(sorted(glob.glob(p, recursive=True)))  # glob
+                elif os.path.isdir(p):
+                    files.extend(sorted(glob.glob(os.path.join(p, '*.*'))))  # dir
+                elif os.path.isfile(p):
+                    files.append(p)  # files
+                else:
+                    raise FileNotFoundError(f'{p} does not exist')
+        images = [x for x in files if x[0].split('.')[-1].lower() in IMG_FORMATS]
+        videos = [x for x in files if x[0].split('.')[-1].lower() in VID_FORMATS]
+        # images = [x for x in files if x.split('.')[-1].lower() in IMG_FORMATS]
+        # videos = [x for x in files if x.split('.')[-1].lower() in VID_FORMATS]
+        ni, nv = len(images), len(videos)
+
+        self.img_size = img_size
+        self.stride = stride
+        self.files = images + videos
+        self.nf = ni + nv  # number of files
+        self.video_flag = [False] * ni + [True] * nv
+        self.mode = 'image'
+        self.auto = auto
+        self.transforms = transforms  # optional
+        self.vid_stride = vid_stride  # video frame-rate stride
+        if any(videos):
+            self._new_video(videos[0])  # new video
+        else:
+            self.cap = None
+        # assert self.nf > 0, f'No images or videos found in {path}. ' \
+        #                     f'Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}'
+
+    def readImg( self, file ):
+        img = cv2.imread( file[0] )
+        height = img.shape[0]
+        width = img.shape[1]
+        x = float(file[2]) * width
+        y = float(file[3]) * height
+        w = float(file[4]) * width
+        h = float(file[5]) * height
+        
+        xmin = int( x - w/2  ) if int( x - w/2 ) > 0 else 0
+        xmax = int( x + w/2  ) if int( x + w/2 ) < width else width
+        ymin = int( y - h/2  ) if int( y - h/2 ) > 0 else 0
+        ymax = int( y + h/2  ) if int( y + h/2 ) < height else height
+
+        # longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
+        
+        # xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
+        # xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
+        # ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
+        # ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
+        
+        img = img[ymin:ymax, xmin:xmax ]
+        return img
+    
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count == self.nf:
+            raise StopIteration
+        img_info = self.files[self.count]
+        if self.video_flag[self.count]:
+            # Read video
+            self.mode = 'video'
+            for _ in range(self.vid_stride):
+                self.cap.grab()
+            ret_val, im0 = self.cap.retrieve()
+            while not ret_val:
+                self.count += 1
+                self.cap.release()
+                if self.count == self.nf:  # last video
+                    raise StopIteration
+                img_info = self.files[self.count]
+                self._new_video(img_info)
+                ret_val, im0 = self.cap.read()
+
+            self.frame += 1
+            # im0 = self._cv2_rotate(im0)  # for use if cv2 autorotation is False
+            #REVIEW: img_info[0]
+            s = f'video {self.count + 1}/{self.nf} ({self.frame}/{self.frames}) {img_info[0]}: '
+
+        else:
+            # Read image
+            self.count += 1
+            # REVIEW: readImg
+            # im0 = cv2.imread(path)  # BGR
+            im0 = self.readImg( img_info ) # BGR
+            assert im0 is not None, f'Image Not Found {img_info}'
+            s = f'image {self.count}/{self.nf} {img_info}: '
+
+        if self.transforms:
+            im = self.transforms(image=cv2.cvtColor(im0, cv2.COLOR_BGR2RGB))["image"]  # transforms
+        else:
+            im = letterbox(im0, self.img_size, stride=self.stride, auto=self.auto)[0]  # padded resize
+            im = im.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            im = np.ascontiguousarray(im)  # contiguous
+        return img_info, im, im0, self.cap, s
+
+    def _new_video(self, path):
+        # Create a new video capture object
+        self.frame = 0
+        self.cap = cv2.VideoCapture(path)
+        self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) / self.vid_stride)
+        self.orientation = int(self.cap.get(cv2.CAP_PROP_ORIENTATION_META))  # rotation degrees
+        # self.cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)  # disable https://github.com/ultralytics/yolov5/issues/8493
+
+    def _cv2_rotate(self, im):
+        # Rotate a cv2 video manually
+        if self.orientation == 0:
+            return cv2.rotate(im, cv2.ROTATE_90_CLOCKWISE)
+        elif self.orientation == 180:
+            return cv2.rotate(im, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif self.orientation == 90:
+            return cv2.rotate(im, cv2.ROTATE_180)
+        return im
+
+    def __len__(self):
+        return self.nf  # number of files
+
 
 class LoadStreams:
     # YOLOv5 streamloader, i.e. `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`
@@ -1232,53 +1374,6 @@ class ClassificationDatasetFromTxt(Dataset):
         self.dataSize = len(samples)
         return samples
     
-    def del_blue_channel_add_sobel( self, img ):
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        grad_x = cv2.Sobel(img_gray , cv2.CV_16S, 1, 0, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
-        grad_y = cv2.Sobel(img_gray , cv2.CV_16S, 0, 1, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
-        abs_grad_x = cv2.convertScaleAbs(grad_x)
-        abs_grad_y = cv2.convertScaleAbs(grad_y)
-        grad = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
-        b, g, r = cv2.split(img)
-        b = grad
-        img = cv2.merge((b, g, r))
-        return img
-    
-    # def huff_convert(self, img, label ):
-    #     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #     # edges = cv2.Canny(gray, 50, 200)
-    #     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #     grad_x = cv2.Sobel(img_gray , cv2.CV_16S, 1, 0, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
-    #     grad_y = cv2.Sobel(img_gray , cv2.CV_16S, 0, 1, ksize=1, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
-    #     abs_grad_x = cv2.convertScaleAbs(grad_x)
-    #     abs_grad_y = cv2.convertScaleAbs(grad_y)
-    #     grad = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
-    #     lines = cv2.HoughLines(grad, 1, math.pi / 180.0, 120)
-
-    #     if lines is not None:
-    #         a, b, c = lines.shape
-    #         for i in range(a):
-    #             rho = lines[i][0][0]
-    #             theta = lines[i][0][1]
-    #             # print( theta )
-    #             angle = theta / math.pi * 180 + 90
-    #             label = label if label < 180 else 360 - label
-    #             # print( angle, label)
-    #             bias = abs(angle  - label) if abs(angle - label) < 90 else 180 - abs(angle  - label)
-    #             if bias <= 3 :
-    #                 a = math.cos(theta)
-    #                 b = math.sin(theta)
-    #                 x0, y0 = a * rho, b * rho
-    #                 pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
-    #                 pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
-    #                 cv2.line(img, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)
-    #             # a = math.cos(theta)
-    #             # b = math.sin(theta)
-    #             # x0, y0 = a * rho, b * rho
-    #             # pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
-    #             # pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
-    #             # cv2.line(img, pt1, pt2, (255, 0, 0), 1, cv2.LINE_AA)    
-    #     return img
     
     def readImg( self, file, pos, label ):
         img = cv2.imread( file )
@@ -1294,14 +1389,13 @@ class ClassificationDatasetFromTxt(Dataset):
         ymin = int( y - h/2  ) if int( y - h/2 ) > 0 else 0
         ymax = int( y + h/2  ) if int( y + h/2 ) < height else height
 
-        # longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
+        longer_side = xmax-xmin if xmax-xmin > ymax-ymin else ymax-ymin
         
-        # xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
-        # xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
-        # ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
-        # ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
+        xmin = int( x - longer_side/2  ) if int( x - longer_side/2 ) > 0 else 0
+        xmax = int( x + longer_side/2  ) if int( x + longer_side/2 ) < width else width
+        ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
+        ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
         
-        # img = self.del_blue_channel_add_sobel( img )
         img = img[ymin:ymax, xmin:xmax ]
         return img, [ymin, ymax, xmin, xmax ]
 
@@ -1310,13 +1404,6 @@ class ClassificationDatasetFromTxt(Dataset):
 
         # Rotate the original image and place it on top of the background image
         rotated = imutils.rotate_bound(img, angle)
-        
-         # Create a new image with the desired background color
-        # height, width = rotated.shape[:2]
-        # bg_image = np.ones((height, width, 3), dtype=np.uint8)
-        # bg_image[:] = bg_color
-        # result = cv2.bitwise_and(rotated, bg_image)
-
         return rotated
 
     def __getitem__(self, index ):
@@ -1356,9 +1443,8 @@ class ClassificationDatasetFromTxt(Dataset):
         except:
             print( f, impos, pos )
             print( im.shape )
-            
-
-        # sample = self.album_transforms(image=cv2.cvtColor(im, cv2.COLOR_BGR2RGB))["image"]
+        
+        
         return sample, label
     
     def __len__(self):

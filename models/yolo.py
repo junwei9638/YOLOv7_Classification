@@ -286,6 +286,7 @@ class ClassificationModel(BaseModel):
         self._from_detection_model(model, nc, cutoff) if model is not None else self._from_yaml(nc)
         self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
         self.inplace = self.yaml.get('inplace', True)
+        self.nc = nc
 
     def _from_detection_model(self, model, nc=1000, cutoff=10):
         # Create a YOLOv5 classification model from a YOLOv5 detection model

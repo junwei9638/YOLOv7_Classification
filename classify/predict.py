@@ -30,9 +30,10 @@ import os
 import platform
 import sys
 from pathlib import Path
-
+import shutil
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -41,8 +42,8 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
-from utils.augmentations import classify_transforms
-from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
+from utils.augmentations import classify_transforms, classify_albumentations
+from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams, LoadImagesForClassify
 from utils.general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
                            increment_path, print_args, strip_optimizer)
 from utils.plots import Annotator
@@ -68,12 +69,15 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride
+        overwrite=None,
+        thresh=0
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
-    webcam = source.isnumeric() or source.endswith('.txt') or (is_url and not is_file)
+    # webcam = source.isnumeric() or source.endswith('.txt') or (is_url and not is_file)
+    webcam = source.isnumeric() or (is_url and not is_file)
     screenshot = source.lower().startswith('screen')
     if is_url and is_file:
         source = check_file(source)  # download
@@ -97,13 +101,16 @@ def run(
     elif screenshot:
         dataset = LoadScreenshots(source, img_size=imgsz, stride=stride, auto=pt)
     else:
-        dataset = LoadImages(source, img_size=imgsz, transforms=classify_transforms(imgsz[0]), vid_stride=vid_stride)
+        #REVIEW: custom dataset
+        dataset = LoadImagesForClassify(source, img_size=imgsz, transforms=classify_albumentations(imgsz[0], mode='val'), vid_stride=vid_stride)
     vid_path, vid_writer = [None] * bs, [None] * bs
 
     # Run inference
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
-    for path, im, im0s, vid_cap, s in dataset:
+    thresh_top1 = np.zeros(thresh+1)
+    
+    for img_info, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.Tensor(im).to(model.device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -116,50 +123,62 @@ def run(
 
         # Post-process
         with dt[2]:
-            pred = F.softmax(results, dim=1)  # probabilities
-
+            # pred = F.softmax(results, dim=1)  # probabilities
+            pred = results
         # Process predictions
         for i, prob in enumerate(pred):  # per image
             seen += 1
             if webcam:  # batch_size >= 1
-                p, im0, frame = path[i], im0s[i].copy(), dataset.count
+                path, im0, frame = img_info[i], im0s[i].copy(), dataset.count
                 s += f'{i}: '
             else:
-                p, im0, frame = path, im0s.copy(), getattr(dataset, 'frame', 0)
+                path, im0, frame = img_info, im0s.copy(), getattr(dataset, 'frame', 0)
 
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # im.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
+            path = Path(path[0])  # to Path
+            save_path = str(save_dir / path.name)  # im.jpg
+            txt_path = str(save_dir / 'labels' / path.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
 
             s += '%gx%g ' % im.shape[2:]  # print string
             annotator = Annotator(im0, example=str(names), pil=True)
 
             # Print results
             top5i = prob.argsort(0, descending=True)[:5].tolist()  # top 5 indices
-            s += f"{', '.join(f'{names[j]} {prob[j]:.2f}' for j in top5i)}, "
+            top1 = prob.argsort(0, descending=True)[0].tolist()
+            # s += f"{', '.join(f'{names[j]} {prob[j]:.2f}' for j in top5i)}, "
 
+            #REVIEW: evaluate
+            gt_angle = int(img_info[1])
+            bias = abs(top1-gt_angle) if abs(top1-gt_angle) < 180 else 360 - abs(top1-gt_angle)
+            if bias <= thresh:
+                thresh_top1[bias] += 1
+            
             # Write results
-            text = '\n'.join(f'{prob[j]:.2f} {names[j]}' for j in top5i)
+            # text = '\n'.join(f'{prob[j]:.2f} {names[j]}' for j in top5i)
+            text = str(top1) + ' ' + img_info[2] + ' ' + img_info[3] + ' ' + img_info[4] + ' ' + img_info[5]
+            # print( text )
+            # print( '==================')
+            
             if save_img or view_img:  # Add bbox to image
                 annotator.text((32, 32), text, txt_color=(255, 255, 255))
             if save_txt:  # Write to file
                 with open(f'{txt_path}.txt', 'a') as f:
-                    f.write(text + '\n')
+                    f.write(text)
 
             # Stream results
             im0 = annotator.result()
             if view_img:
-                if platform.system() == 'Linux' and p not in windows:
-                    windows.append(p)
-                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-                    cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
-                cv2.imshow(str(p), im0)
+                if platform.system() == 'Linux' and path not in windows:
+                    windows.append(path)
+                    cv2.namedWindow(str(path), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+                    cv2.resizeWindow(str(path), im0.shape[1], im0.shape[0])
+                cv2.imshow(str(path), im0)
                 cv2.waitKey(1)  # 1 millisecond
 
             # Save results (image with detections)
-            if save_img:
+            if True:
                 if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
+                    
+                    cv2.imwrite( save_path[:-4] + '_' + str(top1) + '.jpg', im0)
                 else:  # 'video' or 'stream'
                     if vid_path[i] != save_path:  # new video
                         vid_path[i] = save_path
@@ -179,6 +198,13 @@ def run(
         LOGGER.info(f"{s}{dt[1].dt * 1E3:.1f}ms")
 
     # Print results
+    thresh_top1 /= len(dataset)
+    
+    print('=======================================')
+    for i, top1 in enumerate(thresh_top1):
+        print( 'Bias', i, ': ', sum(thresh_top1[:i+1])*100 )
+    print('=======================================')
+    
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}' % t)
     if save_txt or save_img:
@@ -207,6 +233,8 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
+    parser.add_argument('--overwrite', action='store_true', default=False,help='overwrite the project')
+    parser.add_argument('--thresh', type=int, default=0, help='angle threshold')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
@@ -220,4 +248,12 @@ def main(opt):
 
 if __name__ == "__main__":
     opt = parse_opt()
+    if opt.overwrite:
+        overwrite_path = os.path.join( os.getcwd(),'runs','predict-cls', opt.name )
+        if os.path.exists( overwrite_path ) :
+            LOGGER.info( f"{colorstr('Overwrite Path: ')}{opt.name}" )
+
+            shutil.rmtree( overwrite_path )
+        else : 
+            LOGGER.info( f"{colorstr('NO DIRECTORY TO OVERWRITE !!')}" )
     main(opt)

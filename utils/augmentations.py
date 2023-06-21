@@ -355,9 +355,17 @@ def classify_albumentations(
 def classify_transforms(size=224):
     # Transforms to apply if albumentations not installed
     assert isinstance(size, int), f'ERROR: classify_transforms size {size} must be integer, not (list, tuple)'
-    # T.Compose([T.ToTensor(), T.Resize(size), T.CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    # T.Compose([T.ToTensor(), T.Resize(size), T.RandomCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    return T.Compose([T.ToTensor(), CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+    try:
+        import albumentations as A
+        from albumentations.pytorch import ToTensorV2
+        T = [A.augmentations.geometric.resize.LongestMaxSize (max_size=size, interpolation=cv2.INTER_CUBIC, always_apply=False, p=1)]
+        T += [A.PadIfNeeded(min_height=size, min_width=size, border_mode=0, value=(0,0,0))]
+        T += [A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD), ToTensorV2()]  # Normalize and convert to Tensor
+    except ImportError:  # package not installed, skip
+        LOGGER.warning(f'{prefix}⚠️ not found, install with `pip install albumentations` (recommended)')
+    except Exception as e:
+        LOGGER.info(f'{prefix}{e}')
+    # return T.Compose([T.ToTensor(), CenterCrop(size), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
 class LetterBox:
     # YOLOv5 LetterBox class for image preprocessing, i.e. T.Compose([LetterBox(size), ToTensor()])
