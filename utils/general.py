@@ -1238,18 +1238,18 @@ def MedianFilterFilterForXYTop5( preds, targets, device  ):
         # print( '----------------------' )    
     return mid_angle_bias
 
-def PredsPostProcess( all_preds ):
+def PredsPostProcess( all_preds, window_size ):
 
     for i, preds in enumerate( all_preds ) :
         preds_copy = preds.clone()
         
         for j, pred in enumerate(preds):
-            if j-2 < 0:
-                pred = torch.sum( torch.cat( (preds[360-2+j:],preds[:j+3]), -1) )
-            elif j+2 > 359:
-                pred = torch.sum( torch.cat( (preds[j-2:],preds[:j+2-359]), -1) )
+            if j-window_size < 0:
+                pred = torch.sum( torch.cat( (preds[360-window_size+j:],preds[:j+window_size+1]), -1) )
+            elif j+window_size > 359:
+                pred = torch.sum( torch.cat( (preds[j-window_size:],preds[:j+window_size-359]), -1) )
             else:
-                pred = torch.sum( preds[j-2:j+3] )
+                pred = torch.sum( preds[j-window_size:j+window_size+1] ) / (window_size*2)
             preds_copy[j] = pred
         
         all_preds[i] = preds_copy

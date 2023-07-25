@@ -647,14 +647,17 @@ def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
     imshow_img , imshow_label, imshow_pred = [], [], []
     
     for i, label in enumerate( labels ):
-        minus = abs(np.argmax(preds_post[i])-label)
-        if minus > 180:
-            minus = 360 - minus
-        if minus > 50 :
-            biases.append( [preds[i], label, preds_post[i]] )
-            imshow_img.append( img_list[i].unsqueeze(0) )
-            imshow_label.append( label )
-            imshow_pred.append( preds_post[i].index(max(preds_post[i])) )
+        post = abs(np.argmax(preds_post[i])-label)
+        ori = abs(np.argmax(preds[i])-label)
+        if post > 180:
+            post = 360 - post
+        if ori > 180:
+            ori = 360 - ori
+            
+        biases.append( [preds[i], label, preds_post[i]] )
+        imshow_img.append( img_list[i].unsqueeze(0) )
+        imshow_label.append( label )
+        imshow_pred.append( preds_post[i].index(max(preds_post[i])) )
     plt.figure(figsize=(12,12))
     
     for i, bias in enumerate( biases[:12] ) :
@@ -672,13 +675,13 @@ def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
         plt.plot(   bias[1], max(bias[2]), 'b.' )
         plt.ylabel('Value', fontsize=10)
         plt.xlabel('Angle', fontsize=10)
-        plt.title('5 sum -- gt(blue dot): '+ str(bias[1]) + '    pred: ' + str(bias[2].index(max(bias[2]))), fontsize=10)
+        plt.title('+-5 sum -- gt(blue dot): '+ str(bias[1]) + '    pred: ' + str(bias[2].index(max(bias[2]))), fontsize=10)
         plt.subplots_adjust( left=0.125,bottom=0.1, right=0.9, top=0.9, wspace=0.2, hspace=0.35 )
         plt.plot( label_range, bias[2], 'r-')
         plt.savefig( os.path.join( path, ( 'ep' + str(epoch) + '_' + str(i) ) ) )
         plt.close()
         
-    imshow_cls( torch.cat(imshow_img)[:12], imshow_label[:12], pred=imshow_pred[:12], f=os.path.join( path, ( 'ep' + str(epoch) + '_bias_img' ) ) )
+    # imshow_cls( torch.cat(imshow_img)[:12], imshow_label[:12], pred=imshow_pred[:12], f=os.path.join( path, ( 'ep' + str(epoch) + '_bias_img' ) ) )
         
 # def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
 #     preds = pred_prob[0].tolist()
@@ -712,12 +715,16 @@ def Plot_Prob_Distribution_Large_Bias( pred_prob, gt_label, path, epoch ) :
 #         plt.close()
 
 def Plot_Wrong_Sample_Distribution( wrong_preds, path, epoch) :
+    plt.figure(figsize=(12,12))
     preds, targets = zip(*wrong_preds)
     preds = [int(pred.cpu().numpy()) for pred in preds] 
     targets = [ int(target.cpu().numpy()) for target in targets]
+    label_range = np.arange(0, 360)
     plt.title('Wrong Samples Distribution', fontsize=20)
-    plt.ylabel( 'Preds', fontsize=10 )
-    plt.xlabel( 'Labels', fontsize=10 )
+    plt.ylabel( 'Predict Angle', fontsize=15 )
+    plt.xlabel( 'Ground Truth Angle', fontsize=15 )
+    plt.plot( label_range, linewidth=11, color='#ffff00' )
+    # plt.plot( label_range, linewidth=5 )
     plt.plot( targets, preds, 'r.')
     plt.savefig( os.path.join( path, ( 'wrong_preds_epoch' + str(epoch) ) ) )
     plt.close()

@@ -391,14 +391,14 @@ def train(opt, device):
         # REVIEW: 3 layer
         # val_batch_pred = ( val_batch_pred[:, :360] + val_batch_pred[:, 360:720] + val_batch_pred[:, 720:1080] ) / 3
         # Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=val_batch_pred, targets=val_batch_labels)
-        Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
+        # Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
         # Plot_What_U_Want( func_name='topk_dis', save_dir=save_dir, epoch=epoch, preds=topk, targets=targets)
         # Plot_What_U_Want( func_name='ang_bias_dis', save_dir=save_dir, epoch=epoch, preds=bias_preds)
         # Plot_What_U_Want( func_name='gt_loc', save_dir=save_dir, epoch=epoch, preds=gt_loc)
-        Plot_What_U_Want( func_name='topk_cdf', save_dir=save_dir, epoch=epoch, preds=correct )
+        # Plot_What_U_Want( func_name='topk_cdf', save_dir=save_dir, epoch=epoch, preds=correct )
         # Plot_What_U_Want( func_name='bias_topk', save_dir=save_dir, epoch=epoch, preds=bias )
-        Plot_What_U_Want( func_name='bias_mid_top1', save_dir=save_dir, epoch=epoch, preds=bias_list )
-        Plot_What_U_Want( func_name='prob_dis_bias', save_dir=save_dir, epoch=epoch, preds=[y_total, ytotal_post, image_list], targets=targets)
+        # Plot_What_U_Want( func_name='bias_mid_top1', save_dir=save_dir, epoch=epoch, preds=bias_list )
+        # Plot_What_U_Want( func_name='prob_dis_bias', save_dir=save_dir, epoch=epoch, preds=[y_total, ytotal_post, image_list], targets=targets)
         # Plot_What_U_Want( func_name='value_difference', save_dir=save_dir, epoch=epoch, preds=wrong_values )
         # Plot_What_U_Want( func_name='gaussian', save_dir=save_dir, epoch=epoch, preds=preds, targets=preds_before_gaussian)
         # Log metrics

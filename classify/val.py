@@ -41,7 +41,7 @@ from utils.general import LOGGER, Profile, check_img_size, check_requirements, c
 from utils.torch_utils import select_device, smart_inference_mode, gaussian_filter_1d
 from utils.plots import Plot_What_U_Want
 from utils.general import MedianFilter, ZScoreFilter, MedianFilter120, MedianFilterForXY, MedianFilterFilterForXYTop5, PredsPostProcess
-def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_process=False, device=None):
+def CalculateTopk_and_GetWrongSample( pred, pred_post, targets, value, threshold, post_process=False, device=None):
     wrong_preds = []
     bias_ori = []
     gt_loc = []
@@ -53,12 +53,31 @@ def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_proc
 
     # REVIEW: get the wrong pred samples and bias_pred
     bias_topk = pred.clone()
-    
+    bias_topk_post = pred_post.clone()
+    large_bias_count, samll_bias_count, correct_bias_count= 0, 0, 0
+
     for i, target in enumerate(targets):
         bias_topk[i] = abs( bias_topk[i]-target )
         bias_topk[i] = torch.where( bias_topk[i]<=180, bias_topk[i], 360-bias_topk[i] )
+        
+        bias_topk_post[i] = abs( bias_topk_post[i]-target )
+        bias_topk_post[i] = torch.where( bias_topk_post[i]<=180, bias_topk_post[i], 360-bias_topk_post[i] )
+        
         if bias_topk[i, 0] > threshold :
             wrong_preds.append( [pred[i, 0], target] )
+
+        
+        if bias_topk[i, 0] >= 170 : 
+            large_bias_count += 1 
+        elif bias_topk[i, 0] <= 5:
+            samll_bias_count += 1
+        else:
+            correct_bias_count += 1
+            
+        # if bias_topk_post[i, 0] < 6 and bias_topk[i, 0] > 170:
+        #     correct_bias_count += 1
+            
+            
             # if torch.any( pred[i][:] == target ):
             #     wrong_values.append( [ target, value[i][0], value[i][torch.where( pred[i][:] == target )]] )
         # if pred[i][0] != target :
@@ -69,8 +88,7 @@ def CalculateTopk_and_GetWrongSample( pred, targets, value, threshold, post_proc
     #REVIEW: get bias of top15 and location of top1
         # if torch.any( bias[i] <= threshold ):
         #     gt_loc.append( torch.where( bias[i] <= threshold )[0][0] )
-    
-
+    print( correct_bias_count, large_bias_count, samll_bias_count )
     # REVIEW: add threshold of angle
     correct = torch.where( bias_topk <= threshold, torch.tensor(1), torch.tensor(0) ).float()
     # correct = (targets[:, None] == pred).float()
@@ -94,7 +112,7 @@ def Guas_Compare( y, y_gau):
 def run(
     data=ROOT / '../datasets/mnist',  # dataset dir
     weights=ROOT / 'yolov5s-cls.pt',  # model.pt path(s)
-    batch_size=128,  # batch size
+    batch_size=32,  # batch size
     imgsz=224,  # inference size (pixels)
     device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     workers=8,  # max dataloader workers (per RANK in DDP mode)
@@ -109,7 +127,7 @@ def run(
     criterion=None,
     pbar=None,
     nc=None,
-    angle_threshold=5,
+    angle_threshold=0,
     gaussian = None,
     save_dir = None,
     epoch = None,
@@ -157,7 +175,7 @@ def run(
                                                       workers=workers)
 
     model.eval()
-    pred, y_total, y_total_post, image_list, value, targets, loss, dt = [], [], [], [], [], [], 0, (Profile(), Profile(), Profile())
+    pred, pred_post, y_total, y_total_post, image_list, value, targets, loss, dt = [], [], [], [], [], [], [], 0, (Profile(), Profile(), Profile())
     loss24, loss37, loss51, gau_count = 0, 0, 0, 0
     n = len(dataloader)  # number of batches
     
@@ -177,7 +195,8 @@ def run(
                 y = model( images ) 
                 # y_before_gau = y.clone()
                 # y = gaussian_filter_1d( y, kernel_size=5, sigma=5, save_dir=save_dir, device=device)
-                y_postproc = PredsPostProcess( y.clone() )
+                y_postproc = PredsPostProcess( y.clone(), window_size=5 )
+                # y = y_postproc
                 #REVIEW: gaussian
                 # y_before_gau = y.clone()
                 # y = gaussian_filter_1d( y, kernel_size=int(gaussian[0]), sigma=int(gaussian[1]), save_dir=save_dir, device=device)
@@ -198,6 +217,7 @@ def run(
                 image_list.append( images )
                 y_total_post.append( y_postproc )
                 pred.append( y.argsort(1, descending=True)[:, :15] )
+                pred_post.append( y_postproc.argsort(1, descending=True)[:, :15] )
                 value.append( y.sort( 1, descending=True)[0][:, :15] )
                 # for i in range(len(labels) ): 
                 #     print( '-------------------------' )
@@ -228,8 +248,8 @@ def run(
     # top1 = [result24[0], result37[0], result51[0]]
     # top5 = [result24[1], result37[1], result51[1]]
     # wrong_preds = [result24[2], result37[2], result51[2]]
-    pred, targets, value, y_total, y_total_post, image_list =  torch.cat(pred), torch.cat(targets), torch.cat(value), torch.cat(y_total), torch.cat(y_total_post), torch.cat(image_list)
-    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list, topk_list, acc = CalculateTopk_and_GetWrongSample( pred.clone(), targets, value, angle_threshold, post_process=median )
+    pred, pred_post, targets, value, y_total, y_total_post, image_list =  torch.cat(pred), torch.cat(pred_post), torch.cat(targets), torch.cat(value), torch.cat(y_total), torch.cat(y_total_post), torch.cat(image_list)
+    top1, top5, wrong_preds, gt_loc, correct, bias_topk, bias_list, topk_list, acc = CalculateTopk_and_GetWrongSample( pred.clone(), pred_post.clone(), targets, value, angle_threshold, post_process=median )
     loss /= n
     
     # REVIEW: 3 layers
@@ -237,7 +257,7 @@ def run(
     # loss37 /= n
     # loss51 /= n
     
-    Plot_What_U_Want( func_name='topk_threshold', save_dir=save_dir, epoch=epoch, preds=topk_list )
+    
     
     if pbar:
         # REVIEW: 3 layer
@@ -264,7 +284,12 @@ def run(
     
     #REVIEW: 3 layer
     # return top1, top5, [loss, loss24, loss37, loss51], wrong_preds, targets, [pred24, pred37, pred51]
-    print( topk_list )
+    for topk in topk_list:
+        print( topk[0] )
+    # Plot_What_U_Want( func_name='topk_threshold', save_dir=save_dir, epoch=epoch, preds=topk_list )
+    # Plot_What_U_Want( func_name='wrong_dis', save_dir=save_dir, epoch=epoch, preds=wrong_preds)
+    Plot_What_U_Want( func_name='prob_dis', save_dir=save_dir, epoch=epoch, preds=y_total, targets=targets)
+    Plot_What_U_Want( func_name='prob_dis_bias', save_dir=save_dir, epoch=epoch, preds=[y_total, y_total_post, image_list], targets=targets)
     return top1, top5, loss, wrong_preds, targets, pred, gt_loc, correct, bias_topk, bias_list, y_total, y_total_post, image_list
 
 
@@ -276,7 +301,7 @@ def parse_opt():
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
-    parser.add_argument('--verbose', nargs='?', const=True, default=True, help='verbose output')
+    parser.add_argument('--verbose', nargs='?', const=True, default=False, help='verbose output')
     parser.add_argument('--project', default=ROOT / 'runs/val-cls', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')

@@ -1061,7 +1061,6 @@ class Classify(nn.Module):
         super().__init__()
         c_ = c1  # efficientnet_b0 size
         self.conv = Conv(c1, c_, k, s, autopad(k, p), g)
-        
         # self.conv = nn.Conv2d(c1, c_, k, s, autopad(k, p, 1), groups=g, dilation=1, bias=False)
         # self.bn = nn.BatchNorm2d(c_)
         # self.tan = nn.Tanh()

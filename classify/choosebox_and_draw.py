@@ -40,7 +40,7 @@ def create_rotated45_img(path):
             rw = int((w + h) * math.cos( math.radians( 45 ) ))
             rh = rw
             img = imutils.rotate_bound(img, -45)
-            img = cv2.resize(img, (rw, rh), interpolation=cv2.INTER_CUBIC)
+            # img = cv2.resize(img, (rw, rh), interpolation=cv2.INTER_CUBIC)
             
             cv2.imwrite( os.path.join(r_path, img_file.split('/')[-1]), img)
     else:
@@ -53,12 +53,28 @@ def rotate_point(x, y, w, h, angle):
     rh = rw
     x -= w/2
     y -= h/2
+
     # Calculate the new coordinates after rotation
     x_rotated = x * math.cos(angle_rad) + y * math.sin(angle_rad)
     y_rotated = -x * math.sin(angle_rad) + y * math.cos(angle_rad)
-    x_rotated = x_rotated + w/2 + (rw-w)/2
-    y_rotated = y_rotated + h/2 + (rh-h)/2
+    
+    x_rotated += rw/2
+    y_rotated += rh/2 
+
     return int(x_rotated), int(y_rotated)
+
+def rotate_coor(origin, point, angle):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
+
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px, py = point
+
+    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+    return int(qx), int(qy)
 
 def check_neareat_coord( rx, ry, img, file):
     with open(file, 'r') as txt:
@@ -76,9 +92,9 @@ def check_neareat_coord( rx, ry, img, file):
         return w,h
             
             
-ori_img_path = '/home/lab602.11077006/.pipeline/11077006/road_data_gt_whole/val'
+ori_img_path = '/home/lab602.11077006/.pipeline/11077006/gt_whole/val'
 predict_label_path = '/home/lab602.11077006/.pipeline/11077006/yolov5_cls/runs/predict-cls/test/labels'
-rlabel_path = '/home/lab602.11077006/.pipeline/11077006/yolov7/runs/detect/exp2/labels'
+rlabel_path = '/home/lab602.11077006/.pipeline/11077006/yolov7/runs/detect/not_only_car/labels'
 rimg_path = ori_img_path + '_rotated'
 
 txt_files  = glob.glob(predict_label_path  + '/*.txt')
@@ -113,10 +129,10 @@ for txtfile in txt_files :
                 xmax = int( x + w/2  ) 
                 ymin = int( y - h/2  ) 
                 ymax = int( y + h/2  ) 
-            cv2.line(img, (xmin, ymin), (xmin, ymax), (0, 255, 255), 2)
-            cv2.line(img, (xmin, ymax), (xmax, ymax), (0, 255, 255), 2)
-            cv2.line(img, (xmax, ymax), (xmax, ymin), (0, 255, 255), 2) 
-            cv2.line(img, (xmax, ymin), (xmin, ymin), (0, 255, 255), 2) 
+            # cv2.line(img, (xmin, ymin), (xmin, ymax), (0, 255, 255), 2)
+            # cv2.line(img, (xmin, ymax), (xmax, ymax), (0, 255, 255), 2)
+            # cv2.line(img, (xmax, ymax), (xmax, ymin), (0, 255, 255), 2) 
+            # cv2.line(img, (xmax, ymin), (xmin, ymin), (0, 255, 255), 2) 
             
             # 旋轉的正框
             # if ( angle >= 45 and angle <= 135) or ( angle >= 225 and angle <= 315 ):
@@ -148,46 +164,53 @@ for txtfile in txt_files :
                 cos = math.cos( math.radians( restrict_angle45 ) )
                 sin = math.sin( math.radians( restrict_angle45 ) )
                 
-                if restrict_angle90 > 22.5 and restrict_angle90 < 67.5:
+                if restrict_angle90 >= 35 and restrict_angle90 <= 55:
                     rfile = os.path.join( rlabel_path, str(txtfile).split('/')[-1] )
                     r_img = cv2.imread( os.path.join( rimg_path,img_file.split('/')[-1] ) )
                     rx, ry = rotate_point(x, y, img.shape[1], img.shape[0], 45)
-                    rw, rh = check_neareat_coord( x, y, r_img, rfile)
+                    rw, rh = check_neareat_coord( rx, ry, r_img, rfile)
                     rw *= img.shape[1]
-                    rh *= img.shape[0]
-                    if rw > rh :
-                        rw, rh = rh, rw
+                    rh *= img.shape[1]
                 else:
-                    rw = ( w*cos - h*sin )
+                    rw = ( w*cos - h*sin ) / ( cos**2 - sin**2)
                     rh = ( h - rw*sin ) / cos 
-
+                
+                if rw > rh :
+                    rw, rh = rh, rw
                 # 正的旋轉框
-                # half_width = rw / 2
-                # half_height = rh / 2
-                # ori_pt1 =  int(x - half_width), int(y - half_height)
-                # ori_pt2 =  int(x - half_width), int(y + half_height)
-                # ori_pt3 =  int(x + half_width), int(y + half_height)
-                # ori_pt4 =  int(x + half_width), int(y - half_height)
+                half_width = rw / 2
+                half_height = rh / 2
+                ori_pt1 =  int(x + half_width), int(y - half_height)
+                ori_pt2 =  int(x + half_width), int(y + half_height)
+                ori_pt3 =  int(x - half_width), int(y + half_height)
+                ori_pt4 =  int(x - half_width), int(y - half_height)
+                
                 # cv2.line(img, ori_pt1, ori_pt2, (255, 0, 0), 2)
                 # cv2.line(img, ori_pt2, ori_pt3, (255, 0, 0), 2)
                 # cv2.line(img, ori_pt3, ori_pt4, (255, 0, 0), 2)
                 # cv2.line(img, ori_pt4, ori_pt1, (255, 0, 0), 2)
-
-                r_cos = math.cos( math.radians(angle) + math.pi/2)
-                r_sin = math.sin( math.radians(angle) + math.pi/2)
-                pt1 = int((-rw/2*r_cos - rh/2*r_sin)+x), int((rw/2*r_sin - rh/2*r_cos)+y)
-                pt2 = int((rw/2*r_cos - rh/2*r_sin)+x), int((-rw/2*r_sin - rh/2*r_cos)+y)
-                pt3 = int((rw/2*r_cos + rh/2*r_sin)+x), int((-rw/2*r_sin + rh/2*r_cos)+y)
-                pt4 = int((-rw/2*r_cos + rh/2*r_sin)+x), int((rw/2*r_sin + rh/2*r_cos)+y)
-                cv2.line(img, pt1, pt2, (0, 0, 255), 2)
-                cv2.line(img, pt2, pt3, (0, 0, 255), 2)
-                cv2.line(img, pt3, pt4, (0, 0, 255), 2)
-                cv2.line(img, pt4, pt1, (0, 0, 255), 2)
-                # print( angle , rw, rh )
-            cv2.putText(img, str((int(angle))), (int(x),int(y)), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 0), 2, cv2.LINE_AA)
-        
+                r_cos = math.cos( math.radians(90-angle) )
+                r_sin = math.sin( math.radians(90-angle) )
+                pt1 = rotate_coor((x,y), ori_pt1, math.radians(360-angle+90))
+                pt2 = rotate_coor((x,y), ori_pt2, math.radians(360-angle+90))
+                pt3 = rotate_coor((x,y), ori_pt3, math.radians(360-angle+90))
+                pt4 = rotate_coor((x,y), ori_pt4, math.radians(360-angle+90))
+                
+                # pt1 = int((-rw/2*r_cos - rh/2*r_sin)+x), int((rw/2*r_sin - rh/2*r_cos)+y)
+                # pt2 = int((rw/2*r_cos - rh/2*r_sin)+x), int((-rw/2*r_sin - rh/2*r_cos)+y)
+                # pt3 = int((rw/2*r_cos + rh/2*r_sin)+x), int((-rw/2*r_sin + rh/2*r_cos)+y)
+                # pt4 = int((-rw/2*r_cos + rh/2*r_sin)+x), int((rw/2*r_sin + rh/2*r_cos)+y)   
+                cv2.line(img, pt1, pt2, (0, 255, 255), 2)
+                cv2.line(img, pt2, pt3, (0, 255, 255), 2)
+                cv2.line(img, pt3, pt4, (0, 255, 255), 2)
+                cv2.line(img, pt4, pt1, (0, 255, 255), 2)
+                # cv2.putText(img, str((int(angle))), (int(x),int(y)), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 0), 2, cv2.LINE_AA)
+            else:
+                cv2.line(img, (xmin, ymin), (xmin, ymax), (0, 255, 255), 2)
+                cv2.line(img, (xmin, ymax), (xmax, ymax), (0, 255, 255), 2)
+                cv2.line(img, (xmax, ymax), (xmax, ymin), (0, 255, 255), 2) 
+                cv2.line(img, (xmax, ymin), (xmin, ymin), (0, 255, 255), 2)
+        # if r_img is not None:
+        #     cv2.imwrite( os.path.join(save_dir, str(txtfile).split('/')[-1][:-4]+'_rotat' + '.png'), r_img)
         cv2.imwrite( os.path.join(save_dir, str(txtfile).split('/')[-1][:-4] + '.png'), img)
         print( str(txtfile).split('/')[-1] )
-        # cv2.putText(r_img, str(i), (rx,ry), cv2.FONT_HERSHEY_PLAIN, 4, (0, 255, 255), 2, cv2.LINE_AA)
-        #     print( rx, ry)
-        # cv2.imwrite( os.path.join(os.getcwd(), 'test.png'), r_img)

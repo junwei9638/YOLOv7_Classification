@@ -1396,12 +1396,11 @@ class ClassificationDatasetFromTxt(Dataset):
         ymin = int( y - longer_side/2  ) if int( y - longer_side/2 ) > 0 else 0
         ymax = int( y + longer_side/2  ) if int( y + longer_side/2 ) < height else height
         
-        img = img[ymin:ymax, xmin:xmax ]
-        return img, [ymin, ymax, xmin, xmax ]
+        crop_img = img[ymin:ymax, xmin:xmax ]
+        return img, crop_img, [ymin, ymax, xmin, xmax ]
 
     
-    def rotate_with_background(self, img, angle, bg_color=(128, 128, 128)):
-
+    def rotate_with_background(self, img, ori_img, angle, pos):
         # Rotate the original image and place it on top of the background image
         rotated = imutils.rotate_bound(img, angle)
         return rotated
@@ -1416,7 +1415,7 @@ class ClassificationDatasetFromTxt(Dataset):
                 np.save(fn.as_posix(), self.readImg( f, pos ))
             im = np.load(fn)
         else:  # read image
-            im, impos = self.readImg( f, pos, label )  # BGR
+            ori_img, im, impos = self.readImg( f, pos, label )  # BGR
 
         assert im is not None, f'Image Not Found {f}'
         assert label is not None, f'Label Not Found {f}'
@@ -1431,7 +1430,7 @@ class ClassificationDatasetFromTxt(Dataset):
             if label < 0:
                 label += 360
         elif isinstance(self.aug_type, int) :
-            im = self.rotate_with_background(img=im, angle=-self.aug_type)
+            im = self.rotate_with_background(img=im, ori_img=ori_img, angle=-self.aug_type, pos=pos)
             label += self.aug_type
             if label >= 360 :
                 label -= 360
