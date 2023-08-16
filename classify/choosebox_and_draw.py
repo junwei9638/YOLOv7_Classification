@@ -20,7 +20,7 @@ from utils.general import increment_path
 parser = argparse.ArgumentParser(description="Remove_Pedestrians")
 parser.add_argument("--name", type=str, required=True)
 parser.add_argument("--ori_img", type=str, required=True, help='inference imgz')
-parser.add_argument("--predict_label", type=str, required=True, help='inference label')
+parser.add_argument("--pred_label", type=str, required=True, help='inference label in predict-cls folder')
 parser.add_argument("--rlabel", type=str, required=True, help='rotated 45 label which inferenced by another model')
 opt = parser.parse_args()
 
@@ -72,7 +72,7 @@ def check_neareat_coord( rx, ry, img, file):
             
 
 ori_img_path = opt.ori_img
-predict_label_path = opt.predict_label
+predict_label_path = opt.pred_label
 rlabel_path = opt.rlabel
 rimg_path = ori_img_path + '_rotated'
 
