@@ -26,3 +26,6 @@ python classify/create_45_img.py --path  ${your_imgz}
 ```
 python classify/choosebox_and_draw.py --name ${your_name}  --ori_img ${your_imgz} --pred_label ${label_you_inferenced} --rlabel ${label_you_inferenced_45rotated}
 ```
+
+## Angle Classification Model
+[angle_cls](https://drive.google.com/file/d/1U5YM4fOhIdoitrNkIT3ynUgP0V43EFHm/view?usp=drive_link)
