@@ -28,4 +28,5 @@ python classify/choosebox_and_draw.py --name ${your_name}  --ori_img ${your_imgz
 ```
 
 ## Angle Classification Model
-[angle_cls](https://drive.google.com/file/d/1U5YM4fOhIdoitrNkIT3ynUgP0V43EFHm/view?usp=drive_link)
+[angle_cls](https://github.com/junwei9638/YOLOv7_Classification/blob/9edfa77853f362e707f71edba57bb3af5140d301/anlge_cls.pt)
+
