@@ -1,4 +1,4 @@
-# YOLOv7_Backbone_Classification
+# YOLOv7_Backbone_Angle_Classification
 
 
 ## Step1: Prepare Your Dataset .
