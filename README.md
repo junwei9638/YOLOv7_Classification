@@ -24,7 +24,7 @@ python classify/create_45_img.py --path  ${your_imgz}
 
 ## Step5: Choose Box and Draw
 ```
-python classify/choosebox_and_draw.py --name ${your_name}  --ori_img ${your_imgz} --pred_label ${label_you_inferenced} --rlabel ${label_you_inferenced_45rotated}
+python classify/choosebox_and_draw.py --name ${your_name}  --ori_img ${your_imgz} --pred_label ${label_of_step3} --rlabel ${label_you_inferenced_45rotated}
 ```
 
 ## Angle Classification Model
