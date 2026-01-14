@@ -83,4 +83,15 @@ python classify/choosebox_and_draw.py \
 
 ## Pre-trained Models
 You can download the pre-trained angle classification model here:
-- [angle_cls.pt](https://github.com/junwei9638/YOLOv7_Classification/blob/0b643dff766a03f2714dcc3541a75a525de49486/anlge_cls.pt)
+- [pre-trained angle classification model](https://github.com/junwei9638/YOLOv7_Classification/blob/0b643dff766a03f2714dcc3541a75a525de49486/anlge_cls.pt)
+
+## Citation
+If you find this repository useful, please consider citing it:
+```bibtex
+@misc{junwei96382023yolov7angleclassification,
+  author = {Junwei9638},
+  title = {YOLOv7 Angle Classification for Vehicle Detection in Aerial Images},
+  howpublished = {\url{https://github.com/junwei9638/YOLOv7_Classification}},
+  year = {2023}
+}
+```
