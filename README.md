@@ -1,6 +1,6 @@
-# YOLOv7 Angle Classification
+# YOLOv7 Angle Classification for Vehicle Detection in Aerial Images
 
-This repository implements an angle classification module using the YOLOv7 backbone. It is designed to predict the orientation of objects, facilitating the conversion of Horizontal Bounding Boxes (HBB) to Oriented Bounding Boxes (OBB).
+This repository implements an angle classification module using the YOLOv7 backbone, specifically designed for **Vehicle Detection in Aerial Images**. It predicts the orientation of vehicles to facilitate the conversion of Horizontal Bounding Boxes (HBB) to Oriented Bounding Boxes (OBB).
 
 ## Table of Contents
 - [Overview](#overview)
@@ -12,7 +12,7 @@ This repository implements an angle classification module using the YOLOv7 backb
 - [Pre-trained Models](#pre-trained-models)
 
 ## Overview
-This project provides a pipeline for training and deploying an angle classification model. It includes scripts for dataset preparation, model training, inference, and visualization of oriented bounding boxes.
+This project provides a pipeline for training and deploying an angle classification model tailored for **Vehicle Detection in Aerial Images**. It includes scripts for dataset preparation, model training, inference, and visualization of oriented bounding boxes for aerial imagery.
 
 ## Requirements
 To install the necessary dependencies, run:
